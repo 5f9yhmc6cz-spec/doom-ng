@@ -1,0 +1,15 @@
+# DOOM-NG asset pipeline (tools/wad2c.py) uses ONLY the Python 3.8+ standard
+# library (struct, sys, os, collections) -- there are no pip dependencies, so
+# this file is intentionally empty of packages.
+#
+# The real requirements are system-level; install them with your OS package
+# manager (see README.md), not pip:
+#
+#   - a C compiler (gcc / clang) and make
+#   - SDL2            (libsdl2-dev / sdl2)        -- host window
+#   - ImageMagick     (the `magick` command)      -- optional, for `make dump`
+#   - Python 3.8+                                  -- tools/wad2c.py
+#   - doom1.wad       (Doom shareware, bring your own)
+#
+# For the Neo Geo cartridge build you additionally need ngdevkit:
+#   https://github.com/dciabrin/ngdevkit

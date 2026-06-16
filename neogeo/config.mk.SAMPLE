@@ -1,0 +1,66 @@
+# ----------------------------------------------------------------------------
+# ngdevkit build configuration.  COPY THIS TO config.mk before building:
+#     cp config.mk.SAMPLE config.mk
+#
+# These defaults auto-detect the ngdevkit toolchain from your PATH. Install
+# ngdevkit first (https://github.com/dciabrin/ngdevkit) and ensure its bin
+# directory is on your PATH. Override any line below if a tool lives elsewhere.
+# (ngdevkit-examples normally generates config.mk via its ./configure; this is a
+# portable, PATH-based equivalent so the project builds without that scaffolding.)
+# ----------------------------------------------------------------------------
+
+# host tools
+PKGCONFIG=$(shell command -v pkg-config)
+PYTHON=$(shell command -v python3)
+ZIP=$(shell command -v zip)
+CONVERT=$(shell command -v magick)
+SOX=$(shell command -v sox)
+RSYNC=$(shell command -v rsync)
+
+# ngdevkit m68k toolchain
+M68KAR=$(shell command -v m68k-neogeo-elf-ar)
+M68KAS=$(shell command -v m68k-neogeo-elf-as)
+M68KGCC=$(shell command -v m68k-neogeo-elf-gcc)
+M68KGXX=$(shell command -v m68k-neogeo-elf-g++)
+M68KLD=$(shell command -v m68k-neogeo-elf-ld)
+M68KOBJCOPY=$(shell command -v m68k-neogeo-elf-objcopy)
+M68KRANLIB=$(shell command -v m68k-neogeo-elf-ranlib)
+
+# ngdevkit z80 toolchain (sound driver)
+Z80SDAR=$(shell command -v z80-neogeo-ihx-sdar)
+Z80SDAS=$(shell command -v z80-neogeo-ihx-sdasz80)
+Z80SDCC=$(shell command -v z80-neogeo-ihx-sdcc)
+Z80SDLD=$(shell command -v z80-neogeo-ihx-sdldz80)
+Z80SDOBJCOPY=$(shell command -v z80-neogeo-ihx-sdobjcopy)
+Z80SDRANLIB=$(shell command -v z80-neogeo-ihx-sdranlib)
+
+# ngdevkit asset tools
+PALTOOL=$(shell command -v paltool.py)
+TILETOOL=$(shell command -v tiletool.py)
+ADPCMTOOL=$(shell command -v adpcmtool.py)
+VROMTOOL=$(shell command -v vromtool.py)
+FURTOOL=$(shell command -v furtool.py)
+NSSTOOL=$(shell command -v nsstool.py)
+SOUNDTOOL=$(shell command -v soundtool.py)
+
+# ngdevkit build flags (resolved via pkg-config against your ngdevkit install)
+NGCFLAGS=`$(PKGCONFIG) --cflags ngdevkit`
+NGLDFLAGS=`$(PKGCONFIG) --libs ngdevkit`
+NGLIBDIR=`$(PKGCONFIG) --variable=libdir ngdevkit`
+NGZ80INCLUDEDIR=`$(PKGCONFIG) --variable=z80includedir ngdevkit`
+NGZ80LIBDIR=`$(PKGCONFIG) --variable=z80libdir ngdevkit`
+# resolved here (not lazily) -- used as a base dir for nullsound/nullbios deps
+NGSHAREDIR=$(shell $(PKGCONFIG) --variable=sharedir ngdevkit)
+
+# emulator (gngeo) -- optional, only needed for `make run` / `make -C neogeo VSLICE=1 run`
+GNGEO=$(shell command -v ngdevkit-gngeo)
+GNGEO_GLSL=no
+GNGEO_SHADER_PATH=
+GLSL_SHADER_PATH=/tmp/nge/shaders
+SHADER_PATH=/tmp/nge/shaders
+SHADER=qcrt-flat.glslp
+
+# OS-specific (set ENABLE_MSYS2/MINGW=yes only on Windows under MSYS2/MinGW)
+ENABLE_MSYS2=no
+ENABLE_MINGW=no
+GNGEO_INSTALL_PATH=
