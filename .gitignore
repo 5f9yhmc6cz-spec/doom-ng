@@ -72,3 +72,4 @@ neogeo/snd_*.wav
 path_nodes.txt
 ramps_used.txt
 flat_gallery/*.png
+dist/
