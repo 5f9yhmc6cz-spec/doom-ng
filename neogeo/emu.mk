@@ -33,11 +33,15 @@ $(call export_path,gngeo-fullscreen)
 gngeo-fullscreen:
 	$(GNGEO) $(SHADEROPTS) $(EXTRAOPTS) --fullscreen --scale $(SCALE_FULL) --no-resize -i $(ROM) $(GAMEROM)
 
+# MAME: the cart's 64MB C-ROM overflows the puzzledp masquerade's ROM map, so MAME truncates
+# it (-> garbage). Build the software-list set (declares the REAL ROM sizes) and run THAT.
 mame:
-	$(MAME) -w -resolution $(MAME_RES_WIN) -noautosave -skip_gameinfo -rp $(ROM) $(GAMEROM)
+	cd $(CURDIR)/.. && sh tools/make_mame_set.sh
+	$(MAME) -w -resolution $(MAME_RES_WIN) -noautosave -skip_gameinfo -rp $(CURDIR)/../dist/mame/roms -hashpath $(CURDIR)/../dist/mame/hash neogeo doomrails
 
 mame-fullscreen:
-	$(MAME) -noautosave -skip_gameinfo -rp $(ROM) $(GAMEROM)
+	cd $(CURDIR)/.. && sh tools/make_mame_set.sh
+	$(MAME) -noautosave -skip_gameinfo -rp $(CURDIR)/../dist/mame/roms -hashpath $(CURDIR)/../dist/mame/hash neogeo doomrails
 
 else
 # MinGW: GnGeo is a native app, so instead of passing path to the
@@ -59,11 +63,14 @@ gngeo:
 gngeo-fullscreen:
 	cp $(CART) $(BIOS) $(GNGEO_INSTALL_PATH)/roms && (cd $(GNGEO_INSTALL_PATH) && $(GNGEO) $(SHADEROPTS) $(EXTRAOPTS) --fullscreen --scale $(SCALE_FULL) --no-resize $(GAMEROM))
 
+# MAME via the software-list set (real ROM sizes; the puzzledp masquerade truncates the 64MB C-ROM)
 mame:
-	cp $(CART) $(BIOS) $(GNGEO_INSTALL_PATH)/roms && ($(MAME) -w -resolution $(MAME_RES_WIN) -noautosave -skip_gameinfo -rp $(ROM) $(GAMEROM))
+	cd $(CURDIR)/.. && sh tools/make_mame_set.sh
+	$(MAME) -w -resolution $(MAME_RES_WIN) -noautosave -skip_gameinfo -rp $(CURDIR)/../dist/mame/roms -hashpath $(CURDIR)/../dist/mame/hash neogeo doomrails
 
 mame-fullscreen:
-	cp $(CART) $(BIOS) $(GNGEO_INSTALL_PATH)/roms && ($(MAME) -noautosave -skip_gameinfo -rp $(ROM) $(GAMEROM))
+	cd $(CURDIR)/.. && sh tools/make_mame_set.sh
+	$(MAME) -noautosave -skip_gameinfo -rp $(CURDIR)/../dist/mame/roms -hashpath $(CURDIR)/../dist/mame/hash neogeo doomrails
 
 endif
 
