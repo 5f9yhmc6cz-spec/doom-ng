@@ -57,6 +57,29 @@ Install ngdevkit per its README and make sure its `bin/` is on your `PATH` (veri
 
 ---
 
+### Building on Windows (WSL2 + ngdevkit)
+
+ngdevkit is a Unix toolchain, so on Windows build inside **WSL2**:
+
+```sh
+# 1. Install WSL2 + Ubuntu (run in an Administrator PowerShell), then reboot:
+wsl --install -d Ubuntu
+
+# 2. In Ubuntu, install ngdevkit + the build deps:
+sudo add-apt-repository ppa:dciabrin/ngdevkit
+sudo apt update && sudo apt install ngdevkit ngdevkit-toolchain ngdevkit-gngeo \
+    build-essential python3 python3-numpy python3-pil libsdl2-dev imagemagick zip
+
+# 3. Build + run as in §3 (works from /mnt/c/... or your WSL home):
+make rom-vs WAD=doom1.wad && make -C neogeo run
+```
+
+The gngeo window appears via **WSLg**. If it won't take keyboard focus, force the X11
+backend: `SDL_VIDEODRIVER=x11 make -C neogeo run`. For a lag-free window you can instead
+build `gngeo` natively under **MSYS2 (UCRT64)** and run the cart from `neogeo/build/rom`.
+
+---
+
 ## 3. Build + run (VSLICE, the live free-roam engine)
 
 ```sh
