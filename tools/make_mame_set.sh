@@ -10,10 +10,10 @@ rm -f $D/roms/neogeo/doomrails.zip
 ( cd $R && zip -q ../../../$D/roms/neogeo/doomrails.zip 202-p1.p1 202-s1.s1 202-m1.m1 202-v1.v1 202-c1.c1 202-c2.c2 )
 cp $R/neogeo.zip $D/roms/neogeo.zip 2>/dev/null || cp $R/neogeo.zip $D/roms/ 2>/dev/null || true
 cp $R/neogeo.zip $D/roms/neogeo/../neogeo.zip 2>/dev/null || true
-sz(){ stat -f %z "$R/$1" 2>/dev/null || stat -c %s "$R/$1"; }
+sz(){ stat -c %s "$R/$1" 2>/dev/null || stat -f %z "$R/$1"; }   # GNU stat (Linux) first, BSD/macOS fallback
 hx(){ printf '0x%x' "$1"; }
 crc(){ python3 -c "import zlib,sys;print('%08x'%(zlib.crc32(open(sys.argv[1],'rb').read())&0xffffffff))" "$R/$1"; }
-sha(){ shasum -a 1 "$R/$1" | cut -d' ' -f1; }
+sha(){ if command -v sha1sum >/dev/null 2>&1; then sha1sum "$R/$1" | cut -d' ' -f1; else shasum -a 1 "$R/$1" | cut -d' ' -f1; fi; }   # Linux coreutils sha1sum first, macOS shasum fallback (NOT a pipeline-|| -- that masks a missing tool as an empty hash)
 P1=$(sz 202-p1.p1); S1=$(sz 202-s1.s1); M1=$(sz 202-m1.m1); V1=$(sz 202-v1.v1); C1=$(sz 202-c1.c1)
 cat > $D/hash/neogeo.xml <<XML
 <?xml version="1.0"?>

@@ -25,7 +25,7 @@ subprocess.run([_TILETOOL, "--sprite", "-c", gifp,
 # ceiling offset is independent of any FF re-bake.
 def tiles(fn):
     p = os.path.join(NG, fn); return os.path.getsize(p)//64 if os.path.exists(p) else 0
-TILE0 = (tiles("build/assets/base-crom-logo.c1") + tiles("build/assets/logo.c1")
+TILE0 = (257   # base-crom-logo(256)+logo(1) -- HARDCODED (see vsfloorlut.py): a fresh build lacks build/assets/*.c1 until cart-link, so stat'ing them would shift this LUT 257 tiles early.
          + tiles("textiles.c1") + tiles("floorlut.c1") + tiles("sprites.c1")
          + tiles("ceillut.c1") + tiles("ramps.c1") + tiles("vsfloor.c1"))
 COLS, ROWS = w // 16, 112 // 16

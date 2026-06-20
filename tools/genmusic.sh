@@ -8,10 +8,24 @@
 # .adpcmb outputs are gitignored (music is copyright); this + the midi/ dir are the source.
 # Run from the repo root: sh tools/genmusic.sh
 set -e
-SF="${SF:-/opt/homebrew/Cellar/fluid-synth/2.5.4/share/fluid-synth/sf2/VintageDreamsWaves-v2.sf2}"
+# Soundfont: explicit SF= wins; else auto-detect a General-MIDI .sf2 from common
+# locations (Linux distro paths first, then macOS/Homebrew). Override with SF=/path.
+if [ -z "${SF:-}" ]; then
+  for _c in \
+    /usr/share/sounds/sf2/FluidR3_GM.sf2 \
+    /usr/share/sounds/sf2/default-GM.sf2 \
+    /usr/share/soundfonts/default.sf2 \
+    /usr/share/soundfonts/FluidR3_GM.sf2 \
+    /opt/homebrew/share/fluid-synth/sf2/VintageDreamsWaves-v2.sf2 \
+    /opt/homebrew/Cellar/fluid-synth/*/share/fluid-synth/sf2/*.sf2 \
+    /usr/local/share/fluid-synth/sf2/*.sf2 ; do
+    [ -f "$_c" ] && { SF="$_c"; break; }
+  done
+fi
 HERE="$(cd "$(dirname "$0")" && pwd)"
 MIDIDIR="${MIDIDIR:-$HERE/../midi}"
-[ -f "$SF" ] || { echo "need soundfont $SF (set SF=...)"; exit 1; }
+{ [ -n "${SF:-}" ] && [ -f "$SF" ]; } || { echo "no soundfont found -- install one (e.g. 'apt install fluid-soundfont-gm', or 'brew install fluid-synth') or set SF=/path/to.sf2" >&2; exit 1; }
+echo "soundfont: $SF"
 [ -d "$MIDIDIR" ] || { echo "need MIDI dir $MIDIDIR (set MIDIDIR=...)"; exit 1; }
 render() {   # $1 = midi path, $2 = output basename (e1m1..e1m9, e1mi)
   [ -f "$1" ] || { echo "MISSING $1 -- skipping (silent)"; python3 -c "open('$HERE/../neogeo/$2.adpcmb','wb').write(bytes(524288))"; return; }

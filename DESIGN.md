@@ -2,6 +2,11 @@
 
 *Design notes — draft, 2026-06-02. This is a living document; argue with it.*
 
+> ⚠️ **HISTORICAL — pre-VSLICE draft.** This captures the original plan (E1M1-only, flat-shaded
+> floors, mac/Homebrew framing) and does **not** describe the shipped engine. The live cart is
+> **VSLICE**: all nine E1 maps (E1M1–E1M9) with baked perspective floor/ceiling LUTs. For current
+> reality see **README.md** and **AGENTS.md**; kept here for the original design rationale only.
+
 ## Goal
 
 A recognizable, playable **Doom** on the SNK Neo Geo (AES/MVS) — built from scratch.

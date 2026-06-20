@@ -33,7 +33,11 @@ Z80FLAGS=
 Z80LDFLAGS=
 
 # This is an autoconf-generated configuration for your environment
-# (ngdevkit path, OS-specific configs...)
+# (ngdevkit path, OS-specific configs...). Auto-bootstrap from the tracked SAMPLE on a
+# fresh clone (config.mk is gitignored); order-only dep so a later SAMPLE edit can't
+# clobber a customized config.mk -- GNU make remakes included files before reading them.
+config.mk: | config.mk.SAMPLE
+	cp $| $@
 include config.mk
 
 # This defines the layout of your game cartridge
@@ -253,8 +257,8 @@ e1m%.adpcmb:
 # that get invoked automatically when added to the variable below.
 CUSTOM_GENERATE_TARGETS=assets/logo.gif
 assets/logo.gif:
-	magick \( -size 1x1 xc:black \) \( -size 1x1 xc:white \) +append /tmp/dngpal.gif
-	magick -size 16x16 xc:white -remap /tmp/dngpal.gif GIF:$@
+	$(CONVERT) \( -size 1x1 xc:black \) \( -size 1x1 xc:white \) +append /tmp/dngpal.gif
+	$(CONVERT) -size 16x16 xc:white -remap /tmp/dngpal.gif GIF:$@
 
 
 # a default `clean` target removes .o .elf and .ihx from the builddir

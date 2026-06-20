@@ -35,10 +35,12 @@ and is git-ignored. You must bring your own WAD.
 | Need | What for | Where |
 |------|----------|-------|
 | **ngdevkit** | Neo Geo toolchain: `m68k-neogeo-elf-gcc`, the Z80 sound tools, `tiletool.py` etc., the open BIOS, and the `ngdevkit-gngeo` emulator | https://github.com/dciabrin/ngdevkit |
-| **Python 3.8+** with **Pillow** | the asset pipeline (`tools/*.py`); see `requirements.txt` | your OS / pip |
+| **Python 3.8+** with **Pillow + numpy** | the asset pipeline (`tools/*.py`); `pip install -r requirements.txt` (or `apt install python3-pil python3-numpy`) | your OS / pip |
 | **C compiler + make + SDL2** | builds `doomng-host`, the offline renderer/baker the pipeline drives | your OS (`gcc`/`clang`, `libsdl2-dev` / `sdl2`) |
+| **ImageMagick** (`magick` or `convert`) | bakes the logo tile during the cart build | `imagemagick` (apt) / `brew install imagemagick` |
+| **zip / unzip** | repacks the gngeo run datafile (`tools/patch_gngeo_datafile.sh`) | your OS pkg mgr (preinstalled on macOS) |
 | **`doom1.wad`** | the IWAD — you supply it (see above) | shareware / your DOOM install |
-| MAME *(optional)* | cycle-accurate hardware validation | https://mamedev.org |
+| MAME *(optional)* | cycle-accurate hardware validation (needs a real SNK/UniBIOS — not the gngeo path) | https://mamedev.org |
 
 Install ngdevkit per its README and make sure its `bin/` is on your `PATH` (verify with
 `command -v m68k-neogeo-elf-gcc` and `command -v ngdevkit-gngeo`).
@@ -48,8 +50,9 @@ Install ngdevkit per its README and make sure its `bin/` is on your `PATH` (veri
 ## 2. Setup (one time)
 
 ```sh
-cp neogeo/config.mk.SAMPLE neogeo/config.mk   # toolchain config (edit only if a tool isn't on PATH)
-# put your doom1.wad somewhere; you pass its path to the build.
+# config.mk auto-bootstraps from config.mk.SAMPLE on the first build — no manual cp needed.
+# (Only edit neogeo/config.mk if one of the tools above isn't on your PATH.)
+# Put your doom1.wad somewhere; you pass its path to the build below.
 ```
 
 ---
@@ -69,6 +72,15 @@ bake the live floor/ceiling perspective LUTs (`vsfloorlut.py`/`vsceillut.py`, 64
 over 180°) and the per-flat LUT bank (`vsflatlut.py`), then compile the cart. It's
 idempotent — re-run any time you change a tool or the WAD. Subsequent engine-only rebuilds:
 `make -C neogeo cart`.
+
+**No Neo Geo BIOS needed for the gngeo run path** — `make -C neogeo run` boots on the open
+BIOS bundled with gngeo, so you don't need (and must not commit) any copyrighted SNK/UniBIOS
+files. A real BIOS is only required for the optional MAME path (§4).
+
+> **If floors/ceilings/flats render spatially offset or wrapped**, the C-ROM tile-chain
+> offsets are stale — run `python3 tools/fix_tile0.py && make -C neogeo cart`. The LUT
+> bakers hardcode the 257-tile base prefix (logo + fix-font) so a fresh clone gets this
+> right automatically; this recovery is only needed if you hand-bake out of order.
 
 ### Controls
 

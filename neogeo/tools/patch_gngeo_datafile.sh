@@ -53,7 +53,7 @@ printf '\x04' | dd of=rom/puzzledp.drv bs=1 seek=529 count=1 conv=notrunc 2>/dev
 # ~5.3MB = 10 ADPCM-B tracks + SFX, so anything past 1MB -- tracks 2-9, the title track, and the
 # SFX at 0x500000 -- wrapped to garbage => silent SFX + silent title/late-map music.)
 # Region 3 alloc hi-byte @0xD2=210; 202-v1 load hi-byte @0x1AE=430. (<= 8MB fits this one byte.)
-VSZ=1048576; [ -f "$SRCDIR/build/rom/202-v1.v1" ] && VSZ=$(stat -f%z "$SRCDIR/build/rom/202-v1.v1")
+VSZ=1048576; [ -f "$SRCDIR/build/rom/202-v1.v1" ] && VSZ=$(stat -c%s "$SRCDIR/build/rom/202-v1.v1" 2>/dev/null || stat -f%z "$SRCDIR/build/rom/202-v1.v1")  # GNU stat (Linux) first, BSD/macOS fallback
 VP=1048576; while [ "$VP" -lt "$VSZ" ]; do VP=$((VP*2)); done   # next power of 2 >= the V-ROM file
 VHB=$(printf '\\x%02x' $(( (VP>>16) & 0xFF )))                  # the size-dword >>16 byte (0x10=1MB .. 0x80=8MB)
 printf "$VHB" | dd of=rom/puzzledp.drv bs=1 seek=210 count=1 conv=notrunc 2>/dev/null

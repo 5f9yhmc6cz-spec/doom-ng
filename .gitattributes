@@ -1,2 +1,17 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# This project builds with a Unix toolchain (ngdevkit + GNU make + POSIX shell),
+# so every text file MUST check out with LF endings on every platform. Without
+# this, a Windows clone with core.autocrlf=true gets CRLF, which breaks shell
+# shebangs (`bash\r: bad interpreter`) and `\r`-tainted Makefile recipes.
+* text=auto eol=lf
+
+# Keep known-binary assets byte-exact (defensive; generated blobs are gitignored).
+*.wad   binary
+*.png   binary
+*.gif   binary
+*.bmp   binary
+*.bin   binary
+*.c1    binary
+*.c2    binary
+*.fix   binary
+*.adpcma binary
+*.adpcmb binary

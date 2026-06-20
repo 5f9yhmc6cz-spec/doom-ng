@@ -56,7 +56,7 @@ $(BUILDDIR) $(ROM):
 # This target triggers the generation of assets that must be present prior
 # to building the project (including custom generate targets)
 $(BUILDDIR)/.generated: | $(SRCDIRS:%=$(BUILDDIR)/%)
-	find setup -mindepth 1 -maxdepth 1 -type d -print | xargs -r -n1 $(MAKE) -C
+	test ! -d setup || find setup -mindepth 1 -maxdepth 1 -type d -print | xargs -r -n1 $(MAKE) -C
 	echo $(CUSTOM_GENERATE_TARGETS) | xargs -r $(MAKE)
 	touch $@
 
@@ -188,7 +188,7 @@ clean:
 distclean:
 	rm -rf build
 	$(MAKE) clean
-	find setup -mindepth 1 -maxdepth 1 -type d -print | xargs -I{} -r -n1 $(MAKE) -C {} distclean
+	test ! -d setup || find setup -mindepth 1 -maxdepth 1 -type d -print | xargs -I{} -r -n1 $(MAKE) -C {} distclean
 
 
 .PHONY: clean distclean

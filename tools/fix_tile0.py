@@ -41,7 +41,7 @@ def setdef(hf, name, val):
     print("  %-12s %-14s %s -> %s%s" % (hf, name, old, val, tag))
 
 # chain offsets (each = sum of all .c1 tiles before it)
-off_cl  = (tiles("build/assets/base-crom-logo.c1") + tiles("build/assets/logo.c1")
+off_cl  = (257   # base-crom-logo(256)+logo(1) -- HARDCODED so this recovery tool works on a fresh clone (build/assets/*.c1 absent there; tiles() would sys.exit). Matches wad2c.py / the VS bakers.
            + tiles("textiles.c1") + tiles("floorlut.c1") + tiles("sprites.c1"))
 off_rp  = off_cl  + tiles("ceillut.c1")
 off_vf  = off_rp  + tiles("ramps.c1")

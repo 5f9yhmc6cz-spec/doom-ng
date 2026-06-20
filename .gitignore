@@ -1,56 +1,66 @@
-# Build outputs
+# ===== doom-ng .gitignore =====
+# Source-only repo: every DOOM/id-derived asset is GENERATED from your own doom1.wad
+# at build time and must NEVER be committed. Copyrighted Neo Geo BIOS firmware likewise.
+
+# --- Build outputs / intermediates ---
 build/
 *.o
 *.elf
 *.ihx
-*.fix
-*.c1
-*.c2
 *.pal
+*.bin
 doomng-host
 doomng-host-fixed
+# machine-specific toolchain config (auto-bootstrapped from config.mk.SAMPLE)
+neogeo/config.mk
+neogeo/setup/
 
-# Debug frame dumps / generated images
+# --- Neo Geo C-ROM / fix-layer tiles (generated) ---
+*.c1
+*.c2
+*.fix
+*.crom
+# EXCEPTION: ngdevkit's own freely-licensed base art (logo sprite + fix-layer font) is
+# NOT DOOM/id content and MUST ship so a fresh clone can link the cart. Re-include it
+# past the *.c1/*.c2/*.fix rules above. (Regenerate via ngdevkit-examples
+# 00-template/setup/ngdevkit-assets.)
+!neogeo/assets/prebuilt/
+!neogeo/assets/prebuilt/base-crom-logo.c1
+!neogeo/assets/prebuilt/base-crom-logo.c2
+!neogeo/assets/prebuilt/base-srom-text-shadow.fix
+
+# --- Images / debug dumps (generated) ---
 *.bmp
 *.png
 neogeo/assets/logo.gif
 
-# Generated binary art — regenerate from your own WAD
-*.crom
-
-# id Software shareware WAD — bring your own (not redistributed here)
-doom1.wad
+# --- id Software IWAD — bring your own; never redistributed here ---
 *.wad
 
-# ngdevkit machine-specific config / downloaded scaffolding
-neogeo/config.mk
-neogeo/setup/
+# --- Copyrighted Neo Geo BIOS firmware (SNK) + all packaged zips ---
+# A source-only repo tracks NO .zip (BIOS, gngeo datafile, MAME romset).
+*.zip
+neogeo.zip
+aes.zip
+*.sp1
+*.sfix
 
-# macOS
+# --- Python bytecode ---
+__pycache__/
+*.pyc
+
+# --- macOS ---
 .DS_Store
 
-# baked node-render data (generated from your WAD, large) + private emu datafile
-*.bin
-neogeo/nodes.bin
-neogeo/nodes_data.h
-neogeo/vs_e1m1.h
-neogeo/vsfloor.h
-neogeo/vsceil.h
-neogeo/floorlut.h
-neogeo/gngeo_data_doomng.zip
-neogeo/sprites.h
-neogeo/e1m*.adpcmb
-neogeo/nodes_data.c
-neogeo/nodes_idx.c
-neogeo/tools/gngeo-dor
-tools/gngeo-shot/
+# --- Generated audio (from your WAD; the music is also copyright) ---
+*.adpcmb
+neogeo/snd_*.adpcma
+neogeo/snd_*.wav
 midi/
 neogeo/midi/
 
-# --- DOOM-derived generated assets (regenerated from your doom1.wad by `make rom-vs`) ---
-# NEVER commit these: it would redistribute id Software content.
-/doom1.wad
-*.wad
+# --- Generated headers + data (regenerated from doom1.wad by `make rom-vs`) ---
+# NEVER commit — this would redistribute id Software content.
 src/map.c
 neogeo/textiles.h
 neogeo/ramps.h
@@ -66,10 +76,13 @@ neogeo/gunhand.h
 neogeo/floorlut.h
 neogeo/vsfloor.h
 neogeo/vsceil.h
-neogeo/snd_*.adpcma
-neogeo/snd_*.wav
-*.adpcmb
+neogeo/nodes_data.h
+neogeo/nodes_data.c
+neogeo/nodes_idx.c
+neogeo/gngeo_data_doomng.zip
+neogeo/tools/gngeo-dor
+tools/gngeo-shot/
+flat_gallery/*.png
 path_nodes.txt
 ramps_used.txt
-flat_gallery/*.png
 dist/

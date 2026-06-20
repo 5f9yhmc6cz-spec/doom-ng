@@ -1,14 +1,25 @@
-# DOOM-NG asset pipeline (tools/wad2c.py) uses ONLY the Python 3.8+ standard
-# library (struct, sys, os, collections) -- there are no pip dependencies, so
-# this file is intentionally empty of packages.
+# DOOM-NG asset pipeline (tools/*.py) Python dependencies.
 #
-# The real requirements are system-level; install them with your OS package
-# manager (see README.md), not pip:
+#   pip install -r requirements.txt
+#   (or, on Debian/Ubuntu, prefer the system packages: python3-numpy python3-pil)
 #
-#   - a C compiler (gcc / clang) and make
+# Pillow  -- texture/sprite/LUT image handling (tools/wad2c.py and the *lut.py bakers).
+# numpy   -- used by wad2c.py's --ramps pass (the diagonal-alpha edge-tile bake).
+#
+# Historical note: these used to be assumed "globally present" on the original
+# dev machine, so this file once claimed the pipeline was stdlib-only. It is not --
+# a fresh machine needs both, or `make rom-vs` dies at the --ramps step.
+Pillow>=9
+numpy>=1.21
+
+# Everything else the build needs is system-level, installed with your OS package
+# manager (NOT pip) -- see README.md:
+#
+#   - a C compiler (gcc / clang) and GNU make 4+
 #   - SDL2            (libsdl2-dev / sdl2)        -- host window
-#   - ImageMagick     (the `magick` command)      -- optional, for `make dump`
-#   - Python 3.8+                                  -- tools/wad2c.py
+#   - ImageMagick     (the `magick` command)      -- logo tile + `make dump`
+#   - zip / unzip                                  -- gngeo datafile packaging
+#   - Python 3.8+                                  -- tools/*.py
 #   - doom1.wad       (Doom shareware, bring your own)
 #
 # For the Neo Geo cartridge build you additionally need ngdevkit:

@@ -62,6 +62,17 @@ bakers recompute their own `TILE0` when re-run in order; `tools/fix_tile0.py` pa
 committed offsets (incl. embedded AVG/TITLE/MENU banks) when a re-bake isn't run. The live
 floor/ceiling/per-flat LUTs are the chain **end**, so changing them needs no `fix_tile0`.
 
+**Provenance / the 257-tile base prefix.** The chain head — `base-logo` (`base-crom-logo.c1/.c2`,
+256 C-ROM tiles) and the fix-layer font (`base-srom-text-shadow.fix`, 1280 fix tiles) — is
+ngdevkit's own freely-licensed example art (NOT id/DOOM content), committed under
+`neogeo/assets/prebuilt/` past the `*.c1/*.c2/*.fix` ignore rules. DOOM textures therefore start
+at C-ROM tile **257** (`base-logo` 256 + `logo` 1). `wad2c.py`, `floorlut.py`, `ceillut.py` — and
+now `vsfloorlut.py`/`vsceillut.py`/`vsflatlut.py` + `fix_tile0.py` — **hardcode that 257**:
+`build/assets/base-crom-logo.c1` is only created at the cart-link step, so on a FRESH clone it
+doesn't exist when the LUT bakers run; stat-ing it returned 0 and shifted every floor/ceiling/flat
+LUT 257 tiles early (offset/wrapped surfaces that still "built fine"). Hardcoding 257 makes a
+first-from-clone build correct with no manual `fix_tile0`.
+
 ## Conventions
 
 - Comments are dense and explain *why* (the cart is full of hard-won micro-decisions). Match that.

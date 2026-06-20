@@ -13,7 +13,7 @@
 PKGCONFIG=$(shell command -v pkg-config)
 PYTHON=$(shell command -v python3)
 ZIP=$(shell command -v zip)
-CONVERT=$(shell command -v magick)
+CONVERT=$(shell command -v magick || command -v convert)
 SOX=$(shell command -v sox)
 RSYNC=$(shell command -v rsync)
 
