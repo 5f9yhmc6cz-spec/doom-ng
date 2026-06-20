@@ -38,7 +38,7 @@ WAD ?= doom1.wad
 #   make rom-vs WAD=/path/to/doom1.wad        then:   make -C neogeo run     (WASD move/turn, A/Space caps)
 rom-vs:
 	@test -f "$(WAD)" || { echo "ERROR: IWAD not found at '$(WAD)' -- pass WAD=/path/to/doom1.wad (shareware works; not redistributed here)"; exit 1; }
-	@if [ "$(WAD)" != "doom1.wad" ]; then cp "$(WAD)" doom1.wad; fi
+	@if [ ! "$(WAD)" -ef doom1.wad ]; then cp "$(WAD)" doom1.wad; fi   # same-FILE test (-ef): robust when WAD is already the in-tree doom1.wad (any path form), not just the literal string
 	python3 tools/wad2c.py doom1.wad E1M1 src/map.c    # bootstrap: map.c is generated, host compiles against it
 	$(MAKE) doomng-host
 	python3 tools/wad2c.py doom1.wad E1M1 src/map.c    # full asset pass (textures + sprites + title art)

@@ -35,13 +35,20 @@ and is git-ignored. You must bring your own WAD.
 | Need | What for | Where |
 |------|----------|-------|
 | **ngdevkit** | Neo Geo toolchain: `m68k-neogeo-elf-gcc`, the Z80 sound tools, `tiletool.py` etc., the open BIOS, and the `ngdevkit-gngeo` emulator | https://github.com/dciabrin/ngdevkit |
-| **Python 3.8+** with **Pillow** | the asset pipeline (`tools/*.py`); see `requirements.txt` | your OS / pip |
+| **Python 3.11+** with **Pillow** | the asset pipeline (`tools/*.py`) + ngdevkit's `tiletool.py` (needs 3.11's `typing.Self`); see `requirements.txt` | your OS / pip |
 | **C compiler + make + SDL2** | builds `doomng-host`, the offline renderer/baker the pipeline drives | your OS (`gcc`/`clang`, `libsdl2-dev` / `sdl2`) |
+| **ImageMagick** (`magick`) | generates the attract-mode logo tile during the cart build (and `make dump`) | your OS (`imagemagick`) |
+| **`zip` / `unzip`** | repack the gngeo run datafile (`make -C neogeo run`) | usually preinstalled |
 | **`doom1.wad`** | the IWAD — you supply it (see above) | shareware / your DOOM install |
 | MAME *(optional)* | cycle-accurate hardware validation | https://mamedev.org |
 
 Install ngdevkit per its README and make sure its `bin/` is on your `PATH` (verify with
 `command -v m68k-neogeo-elf-gcc` and `command -v ngdevkit-gngeo`).
+
+> **Heads-up (macOS especially):** make sure `python3 --version` reports **3.11 or newer** — ngdevkit's
+> `tiletool.py` imports `typing.Self`, so an older default (e.g. Xcode's Python 3.9) fails the cart build
+> with `ImportError: cannot import name 'Self'`. If you have a newer Python from Homebrew, put its `bin`
+> ahead of `/usr/bin` on your `PATH` (or `brew install python`).
 
 ---
 
@@ -70,25 +77,30 @@ over 180°) and the per-flat LUT bank (`vsflatlut.py`), then compile the cart. I
 idempotent — re-run any time you change a tool or the WAD. Subsequent engine-only rebuilds:
 `make -C neogeo cart`.
 
+> **Audio:** sound effects are extracted from your WAD automatically. The **music** is
+> bring-your-own — the cart ships a *silent* soundtrack loop until you supply MIDIs + a soundfont
+> and run `sh tools/genmusic.sh` (`SF=/path/to.sf2 MIDIDIR=/path/to/midis` to point it at yours).
+
 ### Controls
 
 The cart has a live tuning HUD ("debug shuttle"):
 
-- `W`/`S`/`A`/`D` — move forward/back, turn left/right
+(Keys below are the default gngeo keyboard mapping from `make -C neogeo run`.)
+
+- `W`/`A`/`S`/`D` — move forward/back, turn left/right
 - `SPACE` — show/hide the debug HUD (game keys are live only when it's hidden)
-- `P` — cycle which parameter is selected (`>` caret marks it)
-- `B` / `N` — increase / decrease the selected parameter
-- `C` — fire, `D` — use (open doors / lifts / exit switches)
+- `N` — fire  ·  `M` — use (open doors / lifts / exit switches)
+- **with the HUD up:** `W`/`A`/`S`/`D` move the `>` caret around the parameter grid, `N` / `M` decrease / increase the selected dial, `P` cycles the selection
 
 ### Debug parameters (the dials)
 
 | # | Tag | What |
 |---|-----|------|
-| 0 | `dd` | draw distance (450…1000 in 50s, then 1500…5000 in 500s) |
+| 0 | `dd` | draw distance (50…1000 in 50s, 1500…5000 in 500s, then 6k/8k/12k/16k/32k ≈ whole-map) |
 | 1 | `dc` | per-column see-through depth cap (layers) |
 | 2 | `col` | column resolution (20/32/40/64/80) — fewer = faster |
 | 3 | `cap` | wall-edge bevel mode (smooths the 16px staircase silhouette) |
-| 4 | `zon` | zonal flats (per-row visplane) on/off |
+| 4 | `zon` | zonal flats (per-row visplane): 0 off / 1 on / 2 bias grey-into-pit / 3 bias pit-into-grey |
 | 5 | `gen` | generic mode: synthetic floor/ceiling LUT vs real flats |
 | 6 | `ease` | far-cull easing gain (smooths the horizon under load) |
 | 7 | `wpn` | first-person weapon select |
@@ -109,6 +121,11 @@ The cart has a live tuning HUD ("debug shuttle"):
 | 25 | `lvl` | level select (E1M1…E1M9) |
 | 26 | `pf` | perf preset: `lo` / `md` / `hi` / `ul` (applies a dial set) |
 | 27 | `rset` | reset all dials to defaults |
+| 28 | `hclp` | height-clip flats to the nearest wall (legacy band-aid; default off) |
+| 29 | `lcul` | LUT-cull blocks fully covered by a nearer wall |
+| 30 | `hwt` | per-SCB high-water tail-clear (kills shrunk-strip trails) |
+| 31 | `untx` | untextured checker (debug: see strip extents) |
+| 32 | `fdbg` | flat-source debug view (solid colour per flat ID) |
 
 ### Tuning perf (short version)
 

@@ -164,10 +164,10 @@ static void park_all_sprites(void){
     for(int s=0;s<381;s++){ *REG_VRAMADDR=ADDR_SCB2+s; *REG_VRAMRW=0x0001; *REG_VRAMRW=0; *REG_VRAMRW=0; }
 }
 
-#define SND(n) (*((volatile unsigned char*)0x320000)=(unsigned char)(n))   /* sound-code latch: 1=pistol/menu blip, 2=imp death (music loops from boot) */
+#define SND(n) (*((volatile unsigned char*)0x320000)=(unsigned char)(n))   /* sound-code latch: 1=pistol/menu, 2=scream(legacy), 3=music, 4=boom, 5=itemup, 6=door, 7=imp death, 8=possessed death, 0x10+map=track */
 #if !MENU_HAVE
-static const char *const EPISODES[]={ "E1  KNEE-DEEP IN THE DEAD", "E2  THE SHORES OF HELL (LOCKED)", "E3  INFERNO (LOCKED)" };
-static const char *const SKILLS[]  ={ "I'M TOO YOUNG TO DIE", "HEY, NOT TOO ROUGH", "HURT ME PLENTY", "ULTRA-VIOLENCE", "NIGHTMARE!" };
+static const char *const EPISODES[]={ "EPISODE 1", "EPISODE 2 (LOCKED)", "EPISODE 3 (LOCKED)" };   /* text-mode fallback only (real menu = the WAD's own graphics when menu.h is present); kept id-free */
+static const char *const SKILLS[]  ={ "SKILL 1", "SKILL 2", "SKILL 3", "SKILL 4", "SKILL 5" };
 
 /* DOOM-style vertical menu: > cursor, pistol blip on move/select. Returns the chosen index. Rows
    0..firstlock-1 are selectable; rows below show (e.g. LOCKED episodes) but START ignores them.
@@ -343,34 +343,40 @@ static unsigned char vs_sky[VS_NCOL_MAX];                /* column sees a sky se
 static unsigned char vs_skd[VS_NCOL_MAX];                /* sky DECIDED: the nearest seg owns each column ceiling so recursed far sky cannot bleed the room ceiling above a window */
 static unsigned char vs_ffl[VS_NCOL_MAX];                /* nearest-seg FRONT FLOOR flat slot per column (0xFF unset -> synthetic) */
 static unsigned char vs_cfl[VS_NCOL_MAX];                /* nearest-seg FRONT CEIL flat slot per column (0xFF sky/unset) */
-static unsigned char vs_ffr[VS_NCOL_MAX][5];             /* ZONAL: per-(col,row) FLOOR flat, stamped front-to-back like a DOOM visplane -- each sector painted by its OWN segs as the BSP recurses through openings. Rows below the frontier = synthetic. */
-static unsigned char vs_cfr[VS_NCOL_MAX][7];             /* ZONAL: per-(col,row) CEIL flat */
+static unsigned char vs_ffr[FLOORLUT_COLS][5];           /* ZONAL: per-(BLOCK,row) FLOOR flat. Block-indexed (20-wide) like vs_cfr -- the LUT only reads the 20 block-centre columns. */
+static unsigned char vs_cfr[FLOORLUT_COLS][7];           /* ZONAL: per-(BLOCK,row) CEIL flat. Block-indexed (20-wide), not g_ncol-wide: the LUT only reads the 20 block-centre columns, so stamping all 80 was 75% never-read waste. */
 static short vs_wdep[VS_NCOL_MAX];                       /* per-column nearest SOLID-wall depth (for actor occlusion); 0x7FFF = no solid wall (open/capped) */
 static short vs_stepd[VS_NCOL_MAX];                      /* per-column nearest STEP/lower-wall (riser) depth; 0x7FFF = none. With vs_stept -> occludes a far actor whose feet sit BELOW a nearer step crest (floor geometry never used to occlude actors). */
 static short vs_stept[VS_NCOL_MAX];                      /* that nearest step's CREST screen-row (ybO). Actor hidden in this column when (vs_stepd nearer) AND (vs_stept <= feet) -> feet are behind/below the step. */
 static unsigned char vs_skyblk[FLOORLUT_COLS];           /* SKY-IN-OPENING dedup: 1 if this 16px block already got an opening-sky strip this frame (so one even strip per block, not per wall column) */
-static short vs_fdep[VS_NCOL_MAX][5];                    /* ZONAL: per-(col,row) FLOOR owner = the winning seg's floor-edge row fr (LINE-priority: largest fr = lowest edge = nearest wins, = DOOM visplane occlusion). -1 = unstamped -> synthetic. */
-static short vs_cdep[VS_NCOL_MAX][7];                    /* ZONAL: per-(col,row) CEIL depth (nearest wins) */
+static short vs_fdep[FLOORLUT_COLS][5];                  /* ZONAL: per-(BLOCK,row) FLOOR owner = winning seg's floor-edge row fr (LINE-priority). Block-indexed (20-wide). -1 = unstamped -> synthetic. */
+static short vs_cdep[FLOORLUT_COLS][7];                  /* ZONAL: per-(BLOCK,row) CEIL depth (nearest wins). Block-indexed (20-wide) -- see vs_cfr. */
 static signed short  g_flatpal[VSFLAT_NFLAT];        /* per-map: flat slot -> compacted HW palette slot (-1 = not uploaded) */
 /* emit ONE 16px wall/cap column strip [y0..y1] of texture tex (depth d -> fog shade) */
 #define VS_MURK 800           /* draw distance: walls beyond are simply not drawn (floor/ceiling fill + backdrop carry it) */
 /* DEBUG DIALS (rising-edge): A=draw distance, B=tile/strip budget, C=cap mode; D reserved (map toggle).
    EMIT-only -- they never override the BSP. */
-#define VS_NDD 28
+#define VS_NDD 33
 #define VS_NDC 11
-static int g_dd=11, g_dci=5;   /* DIAGNOSTIC dials: draw distance (DD[] idx) + per-column DEPTH CAP (DC[] idx -> g_dcap); default DD[11]=600 (the author's sweet spot; dd is a HARD wall clamp) / DC[5]=6. */
+static int g_dd=VS_NDD-1, g_dci=5;   /* DIAGNOSTIC dials: draw distance (DD[] idx) + per-column DEPTH CAP (DC[] idx -> g_dcap); default DD[max]=32000 (the author: draw everything for now; dd is a HARD wall clamp) / DC[5]=6. */
 /* DEBUG SHUTTLE: SPACE (CNT_A) = show/hide HUD; P (CNT_B) = cycle WHICH param; N (CNT_C) = value DOWN, B (CNT_D) = value UP; LEVEL is param 15 in the cycle (no longer a dedicated button). */
-#define NSEL 29
+#define NSEL 33
 static int g_sel=13;           /* selected debug param: 0=dd 1=dc 2=col 3=cap 4=zon 5=gen 6=ease 7=wpn 8=mmin 9=mbg 10=fog 11=flod 12=occl 13=bud 14=sky 15=seam 16=clod 17=prop 18=fmrk(floor murk) 19=cmrk(ceil murk) 20=hgun 21=hhud 22=dwlk(door walk-through) 23=LEVEL. '>' caret. Default 13. */
 static int g_dbg=0;            /* debug HUD on/off (P toggles). OFF = clean view + skips the per-frame snprintf/ng_text overhead ("schrodinger's debug"). */
-static int g_zonal=1;          /* ZONAL flats: per-row visplane (correct floor/ceil flat per depth band, each sector painted by its own segs through openings). DEFAULT OFF -> single-flat blanket; shuttle param 4 A/Bs it. Flip default once the author confirms the ride. */
+/* DISPLAY ORDER: HUD grid cell (row*4+col, row-major, 4 cols) -> param index. Identity 0..23; the tail is
+   reordered and 'rset'(27) is DROPPED from the grid (no longer cursor-reachable; case 27 code stays, can be
+   re-added). hclp(28) sits immediately before the perf preset pf(26) on the last row. WASD nav + the caret
+   both run through this, so the param 'case' numbers + tk[] never move (no renumber). NDISP = grid count. */
+#define NDISP 32
+static const unsigned char DSEL[NDISP]={0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23, 24,25,29,30, 31,28,26,32};
+static int g_zonal=0;          /* ZONAL flats: per-row visplane (correct floor/ceil flat per depth band). DEFAULT OFF (the author): original single-flat blanket -> NO per-row visplane stamp = no overdraw trickery wasting cycles, until the full-flats pack is hardened/finished. Shuttle param 4 A/Bs it. */
 static int g_generic=1;        /* GENERIC mode: force the synthetic floor/ceiling LUT + sky (the pre-real-flats look) instead of any real flat; shuttle param 5. A/B vs the flats (and a flicker probe). */
 static int g_murkease=16;       /* far-cull EASING (shuttle param 6) = the per-frame gain as a SHIFT: 0=OFF (constant murk, no wink); 1=>>1 snappiest .. 16=>>16 ultra-gentle. Higher = gentler/slower. Default 4 (>>4). */
 #define NEASE 65   /* ease dial 0..64 (the author: test the limit). NOTE: it's a bit-SHIFT gain -> the per-frame step floors at 1 unit by ~ease 12, so >=12 are all "maximally gentle" (visually identical); kept the wide range anyway. */
 static int g_weapon=1, g_pweap=-1; /* current weapon (0=fist..5=chainsaw; default pistol=1) + last-drawn (for change-only redraw); shuttle param 7 cycles it. */
 /* MURK EXTENT controls (the author's "leave no stone unturned"), shuttle params 8/9/10: */
 #define NMURKMIN 30
-static int g_murkmin=12;   /* (8) far-cull FLOOR: min g_murk_eff under load. Default idx12 = 600. LAST idx = -1 = OFF. */
+static int g_murkmin=NMURKMIN-1;   /* (8) far-cull FLOOR: min g_murk_eff under load. Default = LAST idx (-1 = OFF) (the author: murk off, draw everything for now). idx12=600 was the old sweet spot. */
 static const short MURKMIN[NMURKMIN]={0,50,100,150,200,250,300,350,400,450,500,550,600,650,700,750,800,850,900,950,1000,1500,2000,2500,3000,3500,4000,4500,5000,-1};   /* 0 + 50-steps from 50 to 1000, then 500-steps to 5000 (matches DD); -1 (last) = OFF: far-cull disabled (draw to the strip budget) */
 #define NMURKBG 8
 static int g_murkbg=1;    /* (9) far-field BACKDROP colour (undrawn regions) = the FURTHEST murk layer. Default idx1=0x0111 near-black (the author: deepest murk; floor/ceiling cull to it via the gradient layers). */
@@ -424,6 +430,8 @@ static const struct { short ncol,colw,colrcp; const char *name; } NCOLW[]={{20,1
 static const struct { unsigned char tg, bg, tr, br; const char *name; } CAPMODE[] = {
     { 0, 0,0,0, "off"   },
     {32,32,0,0, "TB32f" },   /* both edges, widest gate, FLAT -- the leading candidate */
+    {32,32,2,2, "TB32g" },   /* GRID-LOCK (tr/br==2): snap the capped strip height to a 16px boundary so the strip's single hardware vsh==255 over the cap tiles -> the baked diagonal renders FULL-height and CHAINS across columns, killing the per-column vsh sawtooth that picket-fences full-height segs. Needs BOTH edges capped (full-height) to make (y1-y0) a whole 16px multiple. Not a raise. A/B vs off/TB32f. */
+    {32,32,3,3, "TB32o" },   /* OPAQUE-CORNER overlay (tr/br==3): the wall strip stays PLAIN (no in-strip caps -> rtop/rbot forced -1), and a SEPARATE overlay sprite is laid over each capped corner. The overlay is SOLID (idx1) above the diagonal + TRANSPARENT below, drawn with a cap palette (idx1 = mean ceiling colour for the top / floor colour for the bottom), so the bevel MERGES with the ceiling/floor instead of revealing the gridded floor/ceiling LUT (the "picket fence" the transparent-corner caps suffer). Costs 1 extra HW sprite per capped corner (budget-backstopped). */
     {32,32,1,1, "TB32r" },
     {16,16,0,0, "TB16f" },
     {16,16,1,1, "TB16r" },
@@ -446,10 +454,21 @@ static const struct { unsigned char tg, bg, tr, br; const char *name; } CAPMODE[
     { 8,32,0,0, "8t32f" },   /* tight top, wide bottom, both flat */
 };
 #define NCAPMODE ((int)(sizeof(CAPMODE)/sizeof(CAPMODE[0])))
+/* OPAQUE-CORNER cap (TB32o) palette slots. The HW palette RAM is fully booked in VS gameplay
+   (0..15 system/LUT/murk, 16..243 walls+flats, 244..254 sprites, 255 backdrop), so there is no
+   PERMANENTLY-free slot. We reserve the TOP TWO wall/flat slots (242,243): the all-E1 wall+flat
+   allocation never realises them on a ride (worst measured E1M3 = 193 wall-band slots; flats pack
+   after but stay well under 242 for the seg-referenced subset), and when this cap mode is ACTIVE
+   the wall/flat allocator's ceiling drops by 2 (gated on CAP_OPAQUE, below) so it CANNOT hand 242/243
+   to a texture, and we re-assert the cap palettes after every per-map upload. Caps OFF -> the ceiling
+   is unchanged (243) and these slots are never written -> byte-identical to before. */
+#define CAP_CEIL_PALSLOT  242
+#define CAP_FLOOR_PALSLOT 243
+#define CAP_OPAQUE (CAPMODE[g_capmode].tr==3)   /* the opaque-corner overlay cap mode is active */
 static int g_vs_murk=VS_MURK, g_vs_budget=VS_BUDGET;  /* wall draw-distance (A dial) + strip budget (now driven by the BUDGET dial below, param 13) */
 static const short BUDGET[]={24,36,48,60,72,84,96,108,120,132,144,156,168,180,192,204,216,228,240,252,264,276,288};   /* DRAW-COUNT CAP steps (12 apart); 41+288 walls + 32 actors < 380 HW slots = safe */
 #define NBUDGET ((int)(sizeof(BUDGET)/sizeof(BUDGET[0])))
-static int g_budgeti=8;   /* draw-count cap dial (param 13): nearest-N wall strips; default = max (288). Dial DOWN to shrink the flicker window + speed dense rooms. */
+static int g_budgeti=NBUDGET-1;   /* draw-count cap dial (param 13): nearest-N wall strips. Default = MAX (BUDGET[last]=288: 41+288 walls +32 actors <380 HW). Dial DOWN (param 13) to shrink the flicker window + speed dense rooms. */
 static int g_opensky=1;   /* SKY-IN-OPENING (param 14): draw sky through windows/openings whose BACK ceiling is sky (#42). 1=on. */
 static int g_seamover=0;  /* SEAM OVERDRAW (param 15): widen each wall strip by N px to the right so neighbours OVERLAP -> a column mid-rebuild is masked by its neighbour's overdraw instead of a blank gap (the author's temporal-parallax flicker mask). 0=off; only bites at col>=32 (col20 strips are already 16px=max width). */
 static int g_murk_eff=VS_MURK;   /* FLICKER FIX: effective far-horizon, eased per frame by budget pressure -> the far-cull drops by DEPTH (stable) not strip-emit-order (which reshuffled frame-to-frame = the wink) */
@@ -461,6 +480,13 @@ static int g_murkcol[VS_NCOL_MAX];                              /* per-column ra
 static int g_radial=0;   /* (23) RADIAL far-cull ON/OFF. OFF = flat perpendicular slab (dC<=g_murk_eff, skip-emit only). ON = RADIAL v2: uniform euclidean reach (per-column g_murkcol) + the column is CLOSED when its nearest wall is beyond reach (vs_open--), so the BSP walk TERMINATES early at the eccentric edges instead of just hiding strips. v1 only skip-emitted (deepening the walk, net-slower); v2 should actually save the walk. Default OFF pending the author's A/B. */
 static int g_vmap=1;     /* (24) VERTICAL MAP: ON = V companion (1:1 world-scale + vertical tiling + DOOM peg). OFF = ORIGINAL (stretch the whole texture to the wall height, no tiling/peg). A/B the close-up look the companion changed. */
 static int g_hclip=0;    /* (28) HEIGHT-CLIP flats: clip each floor/ceiling LUT band to the NEAREST wall's top/bottom (vs_clY/vs_flY) so the flat can't overspill past a wall at col<16. TRADE-OFF: clips to the near wall, so see-through floor/ceiling THROUGH openings is reduced (single band sprite can't both clip the near wall AND show the far flat). Default OFF; A/B it. */
+static int g_lutcull=0;  /* (29) LUT-CULL (perf): PARK a floor/ceiling LUT block when the nearest wall fully covers its band (vs_clY at/above the ceiling-band top, or vs_flY at/below the floor-band bottom). Pixel-identical (walls 41+ overdraw the LUT 1..40). Default OFF: measured no speedup on the ride (the fully-covered case is too rare to pay for the per-block span check) -- kept as a toggle. */
+static int g_hwtail=1;   /* (30) SCB TAIL-CLEAR mode: 1 = high-water (blank only the stale delta past 'cot'); 0 = the old full-pad-to-16 on every shrunk strip. Toggle to A/B that the high-water bookkeeping is not a net loss vs the simple pad. Default ON. */
+static int g_untex=0;    /* (31) DEBUG sprite-budget view: draw every wall strip UNTEXTURED (the PLACEHOLDER tile, uniform) so the sprite GRID is visible -- how many strips across (vertical seams), each strip's tile-height down, and the hardware V-shrink (the tile squashes vertically as a strip is scaled down). Pair with the HUD ns=/t= count. Default OFF. */
+static int g_flatdbg=0;  /* (32) DEBUG flat-source view: paint each floor/ceiling patch a SOLID colour keyed by its flat ID (TEXBASE+(fid&7)) -> SEE which sector's flat draws where (the pit-blue-on-main-floor overspill). Default OFF. */
+static int g_dbg_ffl=-1, g_dbg_bfl=-1;   /* FLAT-DBG readout (fdbg on): centre column's nearest-seg FRONT + BACK floor flat -> see if a main-floor cell wrongly latches the pit's flat from the seg's front side */
+static int g_cam_ffl=0xFF;   /* camera's current-sector FLOOR flat, recomputed once/frame -> the DEFAULT near-floor flat (fixes the nearest-seg-is-a-far-wall mis-latch; keyed on a frame constant so the majority of columns stay byte-identical) */
+static int g_cam_cfl=0xFF;   /* camera's current-sector CEIL flat, recomputed once/frame in the SAME BSP descent -> the DEFAULT top-band ceil flat (symmetric twin of g_cam_ffl; fixes the near far-wall ceiling mis-latch the floor already got, no extra descent) */
 static int g_floor_rows=5, g_ceil_rows=7;             /* LUT rows drawn (full-res band: floor 5, ceil 7), from g_lod_floor/ceil (0 => parked) */
 static int g_noemit=0;                                /* forensic: project+clip (early-out intact) but skip vs_strip writes -> isolate wall projection from emit */
 #define VS_RFMAX 1536                                 /* reciprocal LUT range: covers all drawn depths (<= murk 1500); far falls back to a divide */
@@ -475,6 +501,15 @@ static unsigned short g_rspan[VS_SPANMAX];           /* g_rspan[span] = 65536/sp
    fog init_palettes used). E1M1 = 29 walls + sky -> 16+3*30 = 106 slots. Re-run on the map toggle. */
 static signed short vs_lpal[NTEXTILE];   /* global textile id -> compacted local palette slot, -1 unused */
 static int vs_nlpal=1;                    /* distinct textures uploaded for the current map (band stride) */
+static int g_itembase=16;                 /* per-map base palette slot for ITEM billboards (armour/ammo); set after the flats in vs_upload_tex_pals. draw adds the item's SPR_x_PAL index. */
+/* OPAQUE-CORNER cap palettes -> the 2 reserved slots. idx1 = mean ceiling colour (top overlays) /
+   mean floor colour (bottom overlays); the wedge sprite is idx0/idx1 only. Called only when the
+   opaque cap mode is active (after each per-map wall/flat upload, which would otherwise clobber the
+   top wall/flat slots). Caps OFF -> never called -> these slots are untouched. */
+static void vs_upload_cap_pals(void){
+    for(int i=0;i<16;i++){ MMAP_PALBANK1[CAP_CEIL_PALSLOT*16+i]=CAP_CEIL_PAL[i];
+                           MMAP_PALBANK1[CAP_FLOOR_PALSLOT*16+i]=CAP_FLOOR_PAL[i]; }
+}
 static void vs_upload_tex_pals(void){
     for(int t=0;t<NTEXTILE;t++) vs_lpal[t]=-1;
     int n=0;
@@ -497,16 +532,25 @@ static void vs_upload_tex_pals(void){
     }
     /* per-map FLAT palettes: ONE band each (flats need no distance fog), packed AFTER the 3 wall bands
        at FLATBASE; first-seen distinct flat slots only (E1M2 worst = 16+3*57+28 = 215 <= 243). */
+    int palcap = CAP_OPAQUE ? (CAP_CEIL_PALSLOT-1) : 243;   /* OPAQUE cap ON: reserve 242/243 for the cap palettes -> flats clamp at 241. OFF: unchanged (243). */
     for(int i=0;i<VSFLAT_NFLAT;i++) g_flatpal[i]=-1;
     { int fn=0, FLATBASE=TEXBASE+3*vs_nlpal;
       for(int s=0;s<ve_nseg;s++){
         int fe[2]; fe[0]=ve_ffl[s]; fe[1]=ve_cfl[s];
         for(int k=0;k<2;k++){ int fsl=fe[k];
             if(fsl<VSFLAT_NFLAT && VSFLAT_BASE[fsl]>=0 && g_flatpal[fsl]<0){
-                int slot=FLATBASE+fn++; if(slot>243){ g_flatpal[fsl]=243; continue; }   /* clamp: degrade colour, never overflow palette RAM */
+                int slot=FLATBASE+fn++; if(slot>palcap){ g_flatpal[fsl]=palcap; continue; }   /* clamp: degrade colour, never overflow palette RAM (or stomp the reserved cap slots) */
                 g_flatpal[fsl]=slot; MMAP_PALBANK1[slot*16]=0x8000;
                 for(int i=1;i<16;i++) MMAP_PALBANK1[slot*16+i]=VSFLAT_PAL16[fsl][i]; } }
-      } }
+      }
+      /* ITEM billboard palettes (armour/ammo): one band each, packed right after the flats. Items appear
+         on every map; g_itembase is the runtime slot the draw path adds each item's SPR_x_PAL index to.
+         Worst E1 map: 215 flats + 9 items = 224 <= palcap (241/243) -> never clamps. */
+      g_itembase = FLATBASE + fn;
+      for(int ii=0; ii<NITEMPAL; ii++){ int slot=g_itembase+ii; if(slot>palcap) break;
+          MMAP_PALBANK1[slot*16]=0x8000;
+          for(int i=1;i<16;i++) MMAP_PALBANK1[slot*16+i]=ITEMPAL16[ii][i]; } }
+    if(CAP_OPAQUE) vs_upload_cap_pals();   /* OPAQUE cap ON: (re)assert the 2 cap palettes after the per-map upload so the wall/flat pass can't clobber them */
 }
 /* dyt/dyb = this strip's top/bottom edge slope in screen-px of drop per g_colw-px column (L->R), so the
    cap diagonal (a 16px tile h-shrunk to the column width) matches the local wall slant -- the per-column
@@ -521,6 +565,19 @@ static void vs_upload_tex_pals(void){
 #define VS_SBUFN 300   /* >= max draw-count budget (the dial caps at 288); slots 41..41+N-1 */
 typedef struct { short y0,y1,tex,tcol,d,dyt,dyb,yt0,voff; unsigned char c,sky; } vstrip_t;   /* yt0 = UNCLIPPED wall top (clip-aware vertical peg); voff = texture-TILE offset at yt0 (DOOM pegging: 0 = peg top, >0 = peg bottom for uppers); sky=1 -> screen-anchored window-opening sky strip */
 static vstrip_t g_sbuf[VS_SBUFN];
+/* PERF (crib from Doom8088 FLAT-pad discipline): per-SCB-slot real-tile HIGH-WATER. The shrunk-strip
+   vshrink over-read (gngeo) only reads stale REAL tiles past 'cot', so we keep the invariant "tiles
+   cot..15 are BLANK after every emit" by blanking ONLY the delta from this slot's previous real extent
+   down to 'cot' -- instead of always padding to 16 (which undid the PERF#1 SCB-halving). EVERY dynamic
+   SCB1 writer (walls/sky/actors/muzzle/hud-edges) calls vs_scb_clear_tail so the invariant survives the
+   slot<->geometry reuse that shifts frame-to-frame; g_scb_hw is reset to 16 on map load to force a full
+   first clear over boot/old-map-undefined SCB1. Strictly <= the old per-strip blank count (usually 0-2). */
+static unsigned char g_scb_hw[381];
+static inline void vs_scb_clear_tail(int slot,int cot,int pal){
+    int hw=g_hwtail?g_scb_hw[slot]:16;   /* hwt=0 -> old full-pad-to-16 (A/B that high-water isn't slower) */
+    for(int r=cot;r<hw;r++){ *REG_VRAMRW=(u16)(BLANK_TILE&0xFFFF); *REG_VRAMRW=(u16)(pal<<8); }
+    g_scb_hw[slot]=(unsigned char)(cot<16?cot:16);
+}
 static void vs_strip(int spr,int c,int y0,int y1,int tex,int tcol,int d,int dyt,int dyb,int yt0,int voff){
     int i=spr-41; if(i<0||i>=VS_SBUFN) return;   /* record into the burst buffer (replayed post-walk) */
     vstrip_t *e=&g_sbuf[i]; e->sky=0; e->c=(unsigned char)c; e->y0=(short)y0; e->y1=(short)y1; e->tex=(short)tex; e->tcol=(short)tcol; e->d=(short)d; e->dyt=(short)dyt; e->dyb=(short)dyb; e->yt0=(short)yt0; e->voff=(short)voff;
@@ -528,6 +585,29 @@ static void vs_strip(int spr,int c,int y0,int y1,int tex,int tcol,int d,int dyt,
 static void vs_strip_sky(int spr,int c,int y0,int y1){   /* SKY-IN-OPENING: record a screen-anchored sky strip (two-pass; bursts via vs_sky_strip_emit post-walk) */
     int i=spr-41; if(i<0||i>=VS_SBUFN) return;
     vstrip_t *e=&g_sbuf[i]; e->sky=1; e->c=(unsigned char)c; e->y0=(short)y0; e->y1=(short)y1; e->voff=0;
+}
+/* OPAQUE-CORNER cap overlay sprite: one SCB column-group laid over a wall strip's top/bottom corner.
+   The wedge tiles are SOLID (idx1) above the diagonal + TRANSPARENT (idx0) below, drawn with the cap
+   palette (idx1 = mean ceiling/floor colour) so the bevel merges with the ceiling/floor; the
+   transparent part lets the (already-drawn) plain wall body show through. ytop/vsh/hsh/screen-x are
+   matched to the wall strip so the wedge registers exactly over the corner. The wedge is baked as the
+   negative-slope TOP stack (k=0 nearest the corner); 'flip' carries the in-strip cap's flip semantics
+   (rtfl for top, rbfl for bottom = vh-flip). 'bottom' reverses the stack order so k=0 sits at the
+   corner (screen bottom). Budget-backstopped at 379 (< 380 HW). Uses a FRESH slot (vs_spr++). */
+static void vs_cap_overlay(int ytop,int nt,int ovloff,int flip,int palslot,int vsh,int hsh,int sx,int bottom){
+    if(nt<1 || ovloff<0) return;
+    if(ytop<VS_LBT){ int over=VS_LBT-ytop; int pt=(vsh*16)/255; if(pt<1)pt=1; int drop=over/pt; if(drop>=nt)return; ytop+=drop*pt; nt-=drop; }   /* TOP-CLIP: drop off-band tiles + lower the anchor so the 9-bit y can't wrap (mirrors vs_billboard) */
+    if(nt<1) return;
+    if(vs_spr>=379) return;                                  /* sprite-record backstop (< 380 HW) */
+    int spr=vs_spr++;
+    *REG_VRAMMOD=1; *REG_VRAMADDR=ADDR_SCB1+spr*64;
+    for(int r=0;r<nt;r++){ int k=bottom?(nt-1-r):r;          /* bottom: k=0 (corner) at the SCREEN BOTTOM (last row) */
+        int T=RAMP_OVL_TILE0+ovloff+k;
+        *REG_VRAMRW=(u16)(T&0xFFFF); *REG_VRAMRW=(u16)((palslot<<8)|(((T>>16)&0xF)<<4)|flip); }
+    vs_scb_clear_tail(spr,nt,palslot);   /* keep the blank-tail invariant on this shared slot */
+    int cyf=(496-ytop)&0x1FF;
+    *REG_VRAMMOD=0x200; *REG_VRAMADDR=ADDR_SCB2+spr;
+    *REG_VRAMRW=(u16)((hsh<<8)|vsh); *REG_VRAMRW=(u16)((cyf<<7)|nt); *REG_VRAMRW=(u16)(sx&0x1FF)<<7;
 }
 static void vs_strip_emit(int spr,int c,int y0,int y1,int tex,int tcol,int d,int dyt,int dyb,int yt0,int voff){
     int topclip=(y0<VS_LBT), botclip=(y1>VS_LBB);   /* edge runs OFF the play band -> no real visible edge there -> no cap (the author: clean diagonal where the edge shows, no picket where it's off-screen) */
@@ -559,15 +639,25 @@ static void vs_strip_emit(int spr,int c,int y0,int y1,int tex,int tcol,int d,int
     int rtfl=(dtc>0)?0x01:0x00, rbfl=(dbc>0)?0x02:0x03;   /* only TOP stacks baked: bottom(d)==vh-flip(top(d)) */
     int adt=dtc<0?-dtc:dtc, adb=dbc<0?-dbc:dbc;
     int ntt=(adt+15)>>4, ntb=(adb+15)>>4; if(ntt<1)ntt=1; if(ntb<1)ntb=1;
+    /* OPAQUE-CORNER cap (TB32o): the wall strip stays PLAIN -- force the in-strip cap tiles OFF so y0/y1/
+       cot/vsh/raise are all the unmodified wall values (the strip body is byte-identical to "no cap").
+       Latch which edges WOULD have been capped (same gate) + their slope/flip so we can lay the overlay
+       sprites after the SCB2 write. The tr==1/2 raise/grid-lock blocks below are gated on tr==1/2, so
+       tr==3 leaves the strip untouched. */
+    int ovl_top=(CAP_OPAQUE && rtop>=0), ovl_bot=(CAP_OPAQUE && rbot>=0);
+    int ovl_toff=ovl_top?RAMP_OVL_OFF[dtc-RAMP_DMIN]:-1, ovl_boff=ovl_bot?RAMP_OVL_OFF[dbc-RAMP_DMIN]:-1;
+    if(CAP_OPAQUE){ rtop=-1; rbot=-1; }   /* plain wall body; overlay drawn separately below */
     /* RAISE the capped strip top to the column's HIGH corner (y0 = wall-top at column CENTRE; the high
        corner sits adt/2 above it). Without this, no-raise left each column's LEFT HALF flat at the centre
        height -> a flat-then-diagonal SAWTOOTH per column (= the close-up pickets). Raising makes the
        diagonal span the FULL column (high corner -> low corner) so it CHAINS with the neighbour = smooth
        silhouette. Residual: convex corners bump up <= adt/2 (<=8px) -- localized, far milder than the
        sawtooth. (gate is +-16, so adt<=16, bump<=8.) */
-    if(rtop>=0 && CAPMODE[g_capmode].tr){ y0-=adt/2; if(y0<VS_LBT)y0=VS_LBT; }   /* TOP raise (per-edge); FLAT edges cut into the wall (picket-proof) */
-    if(rbot>=0 && CAPMODE[g_capmode].br){ y1+=adb/2; if(y1>VS_LBB)y1=VS_LBB; }   /* BOTTOM raise/extend (per-edge) */
+    if(rtop>=0 && CAPMODE[g_capmode].tr==1){ y0-=adt/2; if(y0<VS_LBT)y0=VS_LBT; }   /* TOP raise (tr==1); FLAT edges cut into the wall (picket-proof) */
+    if(rbot>=0 && CAPMODE[g_capmode].br==1){ y1+=adb/2; if(y1>VS_LBB)y1=VS_LBB; }   /* BOTTOM raise/extend (br==1) */
     if(y1<=y0) return;
+    if(CAPMODE[g_capmode].tr==2 && rtop>=0){ y0&=~15; if(y0<VS_LBT)y0=VS_LBT; }   /* GRID-LOCK (tr==2): snap the capped top DOWN to a 16px boundary so vsh==255 over the cap tiles -> un-squashed, chaining diagonal (kills the per-column vsh sawtooth). */
+    if(CAPMODE[g_capmode].br==2 && rbot>=0){ y1=(y1+15)&~15; if(y1>VS_LBB)y1=VS_LBB; }   /* GRID-LOCK (br==2): snap the capped bottom UP. Both edges snapped (full-height seg) -> (y1-y0) is a whole 16px multiple -> vsh==255. Only widens the gap, so y1>y0 still holds. */
     int cot=(y1-y0+15)>>4; if(cot<1)cot=1; if(cot>32)cot=32;
     g_vs_tiles+=cot; if(d<g_vs_dmin)g_vs_dmin=d; if(d>g_vs_dmax)g_vs_dmax=d;   /* debug tally */
     int cyf=(496-y0)&0x1FF;
@@ -584,15 +674,28 @@ static void vs_strip_emit(int spr,int c,int y0,int y1,int tex,int tcol,int d,int
         st8=(cot>1)?(int)(((long)th*g_rspan[cot])>>8):0; racc=0;
     }
     for(int r=0;r<cot;r++){ int T, rfl=0;
-        if(captop && r<captop){          T=RAMP_TILE0+rtop+r*wt+tcol; rfl=rtfl; }            /* top cap stack (high corner down) */
+        if(g_untex){                     T=PLACEHOLDER_TILE; }                                /* DEBUG (31): untextured -> uniform placeholder so the sprite grid + per-strip hw V-shrink read clearly */
+        else if(captop && r<captop){          T=RAMP_TILE0+rtop+r*wt+tcol; rfl=rtfl; }            /* top cap stack (high corner down) */
         else if(capbot && r>=cot-capbot){ T=RAMP_TILE0+rbot+(cot-1-r)*wt+tcol; rfl=rbfl; }   /* bottom cap = top stack vh-flipped */
         else { int srow=(th>0)?(racc>>8)%th:0; T=FIRST_TEX_TILE+TEXTBASE[tex]+srow*wt+tcol; }   /* V companion: tile vertically (mod th) instead of clamping -> tall walls repeat, not stretch */
         racc+=st8;
-        *REG_VRAMRW=(u16)(T&0xFFFF); *REG_VRAMRW=(u16)((pal<<8)|(((T>>16)&0xF)<<4)|rfl); }
-    if(vsh<255 && cot<16){ for(int r=cot;r<16;r++){ *REG_VRAMRW=(u16)(BLANK_TILE&0xFFFF); *REG_VRAMRW=(u16)(pal<<8); } }   /* FULL-CLEAR the shrunk strip's chain to 16 tiles (matches the actor billboards ~line 942): a heavily-shrunk strip lands in an SCB slot a TALLER strip used earlier, leaving stale tiles past 'cot'; gngeo's vshrink DDA over-reads into them = the garbage trails (gngeo-only -- MAME's timing hides it). The old +4 pad left a window. Costs more SCB1 blank-writes (undoes the PERF#1 halving) -- worth it for a clean gngeo demo; dial back / toggle if perf bites. */
+        int wp=g_untex ? (TEXBASE+((c&1)|((r&1)<<1))) : pal;   /* untx: 2x2 (col,row) palette checker -> EVERY 16px tile reads distinct, so a strip's tile-rows are visible (one stretched sprite vs stacked) AND adjacent columns differ */
+        *REG_VRAMRW=(u16)(T&0xFFFF); *REG_VRAMRW=(u16)((wp<<8)|(((T>>16)&0xF)<<4)|rfl); }
+    vs_scb_clear_tail(spr,cot,pal);   /* PERF: blank only the genuinely-stale tail past 'cot' (was: always pad to 16, which undid PERF#1). Same garbage-trail safety via the high-water invariant. */
     *REG_VRAMMOD=0x200; *REG_VRAMADDR=ADDR_SCB2+spr;
     int hsh=g_colw-1+g_seamover; if(hsh>15)hsh=15;   /* SEAM OVERDRAW (g_seamover px): widen right so neighbours overlap -> a column mid-rebuild is masked by the overlap, not a blank seam */
     *REG_VRAMRW=(u16)((hsh<<8)|vsh); *REG_VRAMRW=(u16)((cyf<<7)|cot); *REG_VRAMRW=(u16)((c*g_colw)&0x1FF)<<7;
+    /* OPAQUE-CORNER cap (TB32o): lay the overlay wedge(s) over the PLAIN strip's top/bottom corner. The
+       strip body above (top) / below (bottom) the diagonal is painted the ceiling/floor colour so the
+       bevel merges with the floor/ceiling LUT instead of revealing it (the "picket fence"). One extra HW
+       sprite per capped corner (budget-backstopped inside vs_cap_overlay). */
+    if(ovl_top || ovl_bot){
+        int sx=(c*g_colw)&0x1FF, pt=(vsh*16)/255; if(pt<1)pt=1;   /* on-screen px per source-16 tile (matches the strip's vsh) */
+        if(ovl_top){ int cb=ntt; if(cb>cot)cb=cot;
+            vs_cap_overlay(y0,cb,ovl_toff,rtfl,CAP_CEIL_PALSLOT,vsh,hsh,sx,0); }     /* top: anchored at the wall top (tile 0), k=0 (corner) at top */
+        if(ovl_bot){ int cb=ntb; if(cb>cot)cb=cot;
+            vs_cap_overlay(y1-cb*pt,cb,ovl_boff,rbfl,CAP_FLOOR_PALSLOT,vsh,hsh,sx,1); }   /* bottom: anchored up from the wall bottom (y1), k=0 (corner) at the screen bottom */
+    }
 }
 /* SKY-IN-OPENING strip: SCREEN-ANCHORED sky (texture row = screen tile-row, hscrolled by view angle, NO depth
    vshrink) drawn in a window opening, continuous with the ceiling-band sky in vs_lut. Avoids the 3 prior
@@ -607,6 +710,7 @@ static void vs_sky_strip_emit(int spr,int k,int y0,int y1,int ang){   /* k = the
     int sr=(y0>>4)%sth;                                   /* texture row = screen tile-row -> continuous with the ceiling band */
     for(int r=0;r<cot;r++){ int T=FIRST_TEX_TILE+TEXTBASE[SKY_TEX]+sr*swt+stc;
         *REG_VRAMRW=(u16)(T&0xFFFF); *REG_VRAMRW=(u16)((spal<<8)|(((T>>16)&0xF)<<4)); sr++; if(sr>=sth)sr=0; }
+    vs_scb_clear_tail(spr,cot,spal);   /* PERF: keep the blank-tail invariant on this shared (wall<->sky) slot */
     *REG_VRAMMOD=0x200; *REG_VRAMADDR=ADDR_SCB2+spr;
     *REG_VRAMRW=(u16)((15<<8)|255); *REG_VRAMRW=(u16)((cyf<<7)|cot); *REG_VRAMRW=(u16)((k*16)&0x1FF)<<7;   /* full 16px tile (hsh=15), vsh=255 (no depth scale), at the block's grid x=k*16 */
 }
@@ -695,17 +799,19 @@ static void vs_lut(int ang){
         cbase=vs_flatres(vs_cfl[wc],a64,sph,1,cbase0,12,&cpal);   /* nearest-seg FRONT ceil flat (scroll=1: ceiling scrolls with the view, like the floor) */
         }
 #endif
-        if(g_ceil_rows>0){
+        int ceilcov=0; if(g_lutcull){ int cbt=cskip*16, cla=((short)sx*(short)g_colrcp)>>16, clb=((short)(sx+15)*(short)g_colrcp)>>16; if(cla>g_ncol-1)cla=g_ncol-1; if(clb>g_ncol-1)clb=g_ncol-1; ceilcov=1; for(int cc=cla;cc<=clb;cc++) if(vs_clY[cc]>cbt){ceilcov=0;break;} }   /* LUT-CULL: nearest wall top covers the whole ceiling band over this block's span -> park it (the wall overdraws it) */
+        if(g_ceil_rows>0 && !ceilcov){
 #ifdef VS_NOSKY
         if(1){                                             /* DIAG: force-draw ceiling, ignore vs_sky (isolate the black-ceiling cause) */
 #else
         if(!vs_sky[wc]){                                    /* ceiling 1+k: rows cskip.., top-anchored at the band top */
 #endif
-            int cend=cskip+crow; if(g_hclip){ int cl=vs_clY[wc]>>4; if(cl<cend)cend=cl; if(cend<=cskip)cend=cskip+1; }   /* HEIGHT-CLIP (param 28): stop the ceiling at the nearest wall top so it can't overspill into the wall */
+            int cend=cskip+crow; if(g_hclip){ int cl=vs_clY[wc]>>4; if(cl<cend)cend=cl; if(cend<=cskip)cend=cskip+1; }   /* HEIGHT-CLIP (param 28): clip ceiling to nearest wall top. DEAD-END for overspill (R2): guillotines far ceiling legitimately seen OVER near walls. Real fix = per-region flat (zonal). Kept as the old band-aid toggle. */
             *REG_VRAMMOD=1; *REG_VRAMADDR=ADDR_SCB1+(1+k)*64;
             for(int r=cskip;r<cend;r++){ int cb_=cbase, ww=r-(cskip+crow-g_vph)+1, cp=(r>=cskip+crow-g_vph)?((ww*3>2*g_vph)?14:(ww*3>g_vph?15:9)):cpal;   /* CEILING MURK (param 19): bottom g_vph rows = 3-band gradient -> 9 (0.70x) -> 15 (0.55x) -> 14 (0.45x deep) -> backdrop. Crank cmrk to 3..5 rows to see all three bands. */
-                if(g_zonal && !g_generic) cb_=vs_flatres((vs_cdep[wc][r]<0x7FFF)?vs_cfr[wc][r]:0xFF,a64,sph,1,cbase0,12,&cp);   /* ZONAL: per-row visplane ceil flat (scroll=1: ceiling scrolls like the floor); unstamped -> synthetic */
+                if(g_zonal && !g_generic) cb_=vs_flatres((vs_cdep[k][r]<0x7FFF)?vs_cfr[k][r]:0xFF,a64,sph,1,cbase0,12,&cp);   /* ZONAL: per-(BLOCK k,row) visplane ceil flat (block-indexed: k IS the block the stamp wrote to); unstamped -> synthetic */
                 int T=cb_+(VSCEIL_ROWS-1-r)*VSCEIL_COLS+k;   /* square fold: no mirror */
+                if(g_flatdbg){ int cid=(g_zonal&&!g_generic)?((vs_cdep[k][r]<0x7FFF)?vs_cfr[k][r]:0xFF):vs_cfl[wc]; T=PLACEHOLDER_TILE; cp=TEXBASE+(cid&7); }   /* FLAT-SOURCE DEBUG (param 32): solid colour keyed by the ceiling flat ID */
                 *REG_VRAMRW=(u16)(T&0xFFFF); *REG_VRAMRW=(u16)((cp<<8)|(((T>>16)&0xF)<<4)|0x02); }   /* per-column ceil pal + VFLIP (ceiling = floor-cast flipped) */
             *REG_VRAMMOD=0x200; *REG_VRAMADDR=ADDR_SCB2+(1+k);
             *REG_VRAMRW=(u16)((15<<8)|255); *REG_VRAMRW=(u16)((ccyf<<7)|(cend-cskip)); *REG_VRAMRW=(u16)(sx<<7);
@@ -723,12 +829,22 @@ static void vs_lut(int ang){
         /* floor 21+k: rows [fskip,fhi), anchored at the horizon (y112 -> NG y 384). fskip=flod (drops FAR/horizon rows, keeps NEAR); fhi=V-VIEWPORT clip (drops NEAR rows below the band bottom g_vpb) */
         int fskip=5-fkeep; if(fskip<0)fskip=0;   /* full-res band = 5 floor rows (y112..192); keep NEAR rows, cull FAR (horizon) rows for LOD */
         int fhi=(g_vpb-112)>>4; if(fhi>5)fhi=5;  /* V VIEWPORT: clip the floor's bottom to the band (snaps to 16px rows) */
-        if(g_floor_rows>0 && fhi>fskip){
-        int fstart=fskip; if(g_hclip){ int fl=(vs_flY[wc]-112)>>4; if(fl>fstart)fstart=fl; if(fstart>=fhi)fstart=fhi-1; }   /* HEIGHT-CLIP (param 28): start the floor at the nearest wall bottom so it can't overspill above the wall */
+        int floorcov=0; if(g_lutcull){ int fbb=112+fhi*16, fla=((short)sx*(short)g_colrcp)>>16, flb=((short)(sx+15)*(short)g_colrcp)>>16; if(fla>g_ncol-1)fla=g_ncol-1; if(flb>g_ncol-1)flb=g_ncol-1; floorcov=1; for(int cc=fla;cc<=flb;cc++) if(vs_flY[cc]<fbb){floorcov=0;break;} }   /* LUT-CULL: nearest wall bottom covers the whole floor band over this block's span -> park it */
+        if(g_zonal>=2 && !g_generic && g_cam_ffl!=0xFF){   /* BOUNDARY BIAS (zon=2/3): shift the contested main/pit boundary by ONE 16px row (bounded; a cascade would swallow the pit). Applied at the LUT read since the stamp's occupancy-first already self-limits. */
+            int top=5; for(int r=4;r>=0;r--){ int fid=(vs_fdep[k][r]>=0)?vs_ffr[k][r]:0xFF; if(fid==(unsigned char)g_cam_ffl)top=r; else break; }   /* top = highest row of the contiguous bottom camera-floor band */
+            if(top>=1 && top<=4){ int up=top-1; int fu=(vs_fdep[k][up]>=0)?vs_ffr[k][up]:0xFF;
+                if(fu!=0xFF && fu!=(unsigned char)g_cam_ffl){   /* a pit cell sits directly above the camera band -> the boundary is here */
+                    if(g_zonal==2){ vs_ffr[k][up]=(unsigned char)g_cam_ffl; vs_fdep[k][up]=vs_fdep[k][top]; }       /* zon=2: pit row -> grey  (boundary leans UP, grey-into-pit, blue never out) */
+                    else          { vs_ffr[k][top]=(unsigned char)fu;        vs_fdep[k][top]=vs_fdep[k][up];  }      /* zon=3: top grey row -> pit (boundary leans DOWN, pit-into-grey, the opposite lean) */
+                } }
+        }
+        if(g_floor_rows>0 && fhi>fskip && !floorcov){
+        int fstart=fskip; if(g_hclip){ int fl=(vs_flY[wc]-112)>>4; if(fl>fstart)fstart=fl; if(fstart>=fhi)fstart=fhi-1; }   /* HEIGHT-CLIP (param 28): clip floor to nearest wall bottom. Same DEAD-END as the ceiling (R2). Real fix = per-region flat (zonal). Kept as the old band-aid toggle. */
         *REG_VRAMMOD=1; *REG_VRAMADDR=ADDR_SCB1+(21+k)*64;
         for(int r=fstart;r<fhi;r++){ int fb=fbase, vv=fskip+g_vpw-r, fp=(r<fskip+g_vpw)?((vv*3>2*g_vpw)?14:(vv*3>g_vpw?10:11)):fpal;   /* FLOOR MURK (param 18): far g_vpw rows = 3-band gradient -> 11 (0.90x) -> 10 (0.78x) -> 14 (0.45x deep) -> backdrop. Crank fmrk to 3..5 rows to see all three bands. */
-            if(g_zonal && !g_generic) fb=vs_flatres((vs_fdep[wc][r]>=0)?vs_ffr[wc][r]:0xFF,a64,sph,1,fbase0,13,&fp);   /* ZONAL: per-row visplane floor flat (unstamped rows -> synthetic; vs_fdep now holds the winning fr, -1=unstamped); GENERIC forces synthetic */
+            if(g_zonal && !g_generic) fb=vs_flatres((vs_fdep[k][r]>=0)?vs_ffr[k][r]:0xFF,a64,sph,1,fbase0,13,&fp);   /* ZONAL: per-(BLOCK k,row) visplane floor flat (block-indexed: k IS the block the stamp wrote to); unstamped -> synthetic */
             int T=fb+r*VSFLOOR_COLS+k;     /* square fold: no mirror */
+            if(g_flatdbg){ int fid=(g_zonal&&!g_generic)?((vs_fdep[k][r]>=0)?vs_ffr[k][r]:0xFF):vs_ffl[wc]; T=PLACEHOLDER_TILE; fp=TEXBASE+(fid&7); }   /* FLAT-SOURCE DEBUG (param 32): solid colour keyed by the floor flat ID -> see pit-blue bleeding onto the main floor */
             *REG_VRAMRW=(u16)(T&0xFFFF); *REG_VRAMRW=(u16)((fp<<8)|(((T>>16)&0xF)<<4)); }   /* per-column floor pal (real flat) */
         *REG_VRAMMOD=0x200; *REG_VRAMADDR=ADDR_SCB2+(21+k);
         *REG_VRAMRW=(u16)((15<<8)|255); *REG_VRAMRW=(u16)((((384-fstart*16)&0x1FF)<<7)|(fhi-fstart)); *REG_VRAMRW=(u16)(sx<<7);
@@ -797,17 +913,21 @@ static void vs_render_seg(int s){
         int just=!vs_skd[c];                          /* this seg is the NEAREST to latch column c (owns its FRONT flat + the BACK zone if two-sided) */
         if(just){ vs_clY[c]=(short)ytF; vs_flY[c]=(short)ybF; }   /* nearest wall TOP/BOTTOM screen rows -> flat height-occlusion extents (consumed by vs_lut when g_hclip) */
 #if VS_SKYWIN
-        if(just){ int sk=(fl&6)?1:0; vs_sky[c]=sk; vs_skd[c]=1; vs_ffl[c]=ve_ffl[s]; vs_cfl[c]=sk?0xFF:ve_cfl[s]; }   /* WINDOW-SKY test: front OR back F_SKY1 -> sky (suppression off) */
+        if(just){ int sk=(fl&6)?1:0; vs_sky[c]=sk; vs_skd[c]=1; vs_ffl[c]=ve_ffl[s]; vs_cfl[c]=sk?0xFF:ve_cfl[s]; }   /* blanket FRONT floor (blanket-back flip reverted: it broke the MAJORITY front-visible columns; correct fix is per-column/per-row sector selection, not a blanket flip) */
 #else
-        if(just){ vs_sky[c]=(fl&2)?1:0; vs_skd[c]=1; vs_ffl[c]=ve_ffl[s]; vs_cfl[c]=(fl&2)?0xFF:ve_cfl[s]; }   /* NEAREST seg owns the column ceiling sky + FRONT floor/ceil flat (sky=>0xFF) */
+        if(just){ vs_sky[c]=(fl&2)?1:0; vs_skd[c]=1; vs_ffl[c]=ve_ffl[s]; vs_cfl[c]=(fl&2)?0xFF:ve_cfl[s]; }   /* blanket FRONT floor (blanket-back flip reverted: broke the majority front-visible columns) */
 #endif
+        if(g_flatdbg && just && c==(g_ncol>>1)){ g_dbg_ffl=ve_ffl[s]; g_dbg_bfl=two?ve_bfl[s]:-1; }   /* FLAT-DBG: centre column's nearest seg -> front (picked) + back floor flat. If a main-floor cell reads ffl=pit-flat / bfl=main-flat, the seg's FRONT side is the pit (wrong sector chosen). */
         if(g_zonal && !g_generic){   /* VISPLANE STAMP -- only when the LUT actually READS it (gen=1 uses the synthetic blanket, so the stamp was pure wasted memory-bound work = the perf win). */
-            short dep=(short)dC; int ffl_s=ve_ffl[s], cfl_s=ve_cfl[s];
+            short dep=(short)dC;
+            int bk=(c*g_colw+(g_colw>>1))>>4; if(bk>FLOORLUT_COLS-1)bk=FLOORLUT_COLS-1;   /* col -> its 16px LUT block (the 20 cols the LUT reads). At col20 (g_colw=16) bk==c. Shared by floor + ceiling stamp. */
             int fr=(ybF-VS_HOR)>>4; if(fr<0)fr=0; if(fr>4)fr=4;
-            unsigned char *ffr_c=vs_ffr[c]; short *fdep_c=vs_fdep[c];   /* floor: LINE-priority (largest fr=nearest owns the rows below). fdep non-decreasing in r -> break once a >=fr seg owns the row. */
-            for(int r=fr; r<5 && fr>fdep_c[r]; r++){ ffr_c[r]=(unsigned char)ffl_s; fdep_c[r]=(short)fr; }
+            int ffl_s=(fr>=4)?g_cam_ffl:ve_ffl[s];   /* CAMERA-SECTOR DEFAULT: near-band floor edge (fr==4 = your level floor) takes the camera's own sector flat; a higher edge (fr<4 = a distinct stepped/lower floor) keeps the seg's own flat. Fixes the nearest-seg-is-a-far-wall mis-latch without the blanket-flip regression. */
+            unsigned char *ffr_c=vs_ffr[bk]; short *fdep_c=vs_fdep[bk];   /* floor: LINE-priority (largest fr=nearest owns the rows below), BLOCK-indexed. */
+            for(int r=fr; r<5 && fdep_c[r]<0; r++){ ffr_c[r]=(unsigned char)ffl_s; fdep_c[r]=(short)fr; }   /* OCCUPANCY-FIRST: front-to-back, the NEAREST seg to claim a row wins. zon=2 INWARD BIAS is applied later at the LUT read (vs_lut), not here. */
             int cr=ytF>>4; if(cr<0)cr=0; if(cr>VSCEIL_ROWS-1)cr=VSCEIL_ROWS-1;
-            unsigned char *cfr_c=vs_cfr[c]; short *cdep_c=vs_cdep[c];   /* ceil: DEPTH-priority, nearest wins per row */
+            int cfl_s=(cr<=0)?g_cam_cfl:ve_cfl[s];   /* CEILING CAMERA-SECTOR DEFAULT (twin of the floor's fr>=4 at line 916): a seg whose ceiling-top reaches the very top band (cr==0 = the camera's own high ceiling) takes the camera-sector ceil flat; a stepped/lowered ceiling (cr>0, top edge lower on screen) keeps the seg's own front flat. Fixes the near far-wall ceiling mis-latch without a blanket flip. */
+            unsigned char *cfr_c=vs_cfr[bk]; short *cdep_c=vs_cdep[bk];   /* ceil: DEPTH-priority, nearest wins per row (bk computed above, shared with floor) */
             for(int r=0;r<=cr;r++) if(dep<cdep_c[r]){ cfr_c[r]=(unsigned char)cfl_s; cdep_c[r]=dep; }
         }
         if(!two){
@@ -903,6 +1023,7 @@ static void vs_set_map(int m){
     vs_camx=ve_sx; vs_camy=ve_sy; vs_camang=(ve_sa*256/360)&255;   /* spawn pose */
     vs_eye=vs_floor_at(ve_sx,ve_sy)+41;                            /* SNAP eye to new floor (no ease from the old map) */
     park_all_sprites(); vs_prevspr=41;                            /* drop old map's strips; force a full re-emit */
+    { int s; for(s=0;s<381;s++) g_scb_hw[s]=16; }                 /* PERF: reset SCB tail high-water -> first emit per slot full-clears boot/old-map-undefined SCB1 */
     vs_upload_tex_pals();                                          /* per-map compacted wall+sky palettes */
 }
 /* ===== ACTOR BILLBOARD (S1): project a world point (wx,wy on floor floorz) to a hardware-scaled sprite.
@@ -915,13 +1036,13 @@ static void vs_billboard(int wx,int wy,int floorz,int base,int wt,int ht,int lo,
     if(d<VS_NEAR) return;                                                    /* behind the near plane */
     int sd=(int)(((long)dx*vs_fsn-(long)dy*vs_fcs)>>8);                     /* lateral offset */
     int rf=(d<VS_RFMAX)?g_rf[d]:(int)(((long)VS_FOCAL<<8)/d);               /* TRUE 1/depth -> drives the POSITIONS (feet + lateral) so a sprite stays glued to the floor at EVERY depth */
-    int rfs=rf>256?256:rf;   /* SIZE scale: the Neo Geo can't MAGNIFY (vsh caps at 255) -> cap the sprite SIZE + its TO/LO offsets at 1:1. Do NOT cap the feet/lateral: capping rf there pinned close baddies' feet at y=112+41=153 = the float. The 1:1 TO offset keeps topy from wrapping. */
-    int sx=VS_HALF+(int)(((long)(short)sd*(short)rf)>>8);                   /* origin screen-x (TRUE) */
-    int feet=VS_HOR-(int)(((long)(short)(floorz-g_flooreye)*(short)rf)>>8); /* origin screen-y on the floor (TRUE -> on the floor at all depths; g_flooreye = static-LUT ref, no stair lag) */
-    int sw=(int)(((long)16*rfs)>>8); if(sw<1)sw=1; if(sw>16)sw=16;          /* per-column display width (px, 1:1) */
-    int topy=feet-(int)(((long)to*rfs)>>8);                                 /* sprite TOP = origin up by TO (1:1 -> no 9-bit y wrap) */
-    int leftx=sx-(int)(((long)lo*rfs)>>8);                                  /* sprite LEFT = origin left by LO (1:1) */
-    int srch=ht*16, scrh=(int)(((long)srch*rfs)>>8);                        /* source vs on-screen height (1:1) */
+    int rfs=rf>512?512:rf;   /* SIZE scale: hardware shrinks only (can't magnify past the SOURCE). Billboards are baked 2x (wad2c HUD1X), so the magnify cap is 2x (512) and the SIZE terms divide by 512 (>>9) -> TRUE perspective size for depth>=80, 1:1-source at depth=80, slightly small only when very near. POSITION (feet/lateral) still uses the uncapped rf (>>8): world-anchored + scale-independent. (3x would need /768.) */
+    int sx=VS_HALF+(int)(((long)(short)sd*(short)rf)>>8);                   /* origin screen-x (TRUE position) */
+    int feet=VS_HOR-(int)(((long)(short)(floorz-g_flooreye)*(short)rf)>>8); /* origin screen-y on the floor (TRUE position; g_flooreye = static-LUT ref, no stair lag) */
+    int sw=(int)(((long)16*rfs)>>9); if(sw<1)sw=1; if(sw>16)sw=16;          /* per-column display width (px) -- 2x source /512 */
+    int topy=feet-(int)(((long)to*rfs)>>9);                                 /* sprite TOP = feet up by TO (2x source /512) */
+    int leftx=sx-(int)(((long)lo*rfs)>>9);                                  /* sprite LEFT = origin left by LO (2x source /512) */
+    int srch=ht*16, scrh=(int)(((long)srch*rfs)>>9);                        /* source (2x) vs on-screen height (/512) */
     int vsh=(srch>0)?(scrh*255)/srch:255; if(vsh<1)vsh=1; if(vsh>255)vsh=255;   /* v-shrink: ht*16 source -> scrh */
     int hsh=sw-1; if(hsh<0)hsh=0; if(hsh>15)hsh=15;
     int t0=0, topy_d=topy;   /* TOP-CLIP: if the sprite top runs above the play band, SKIP the off-top source tiles + drop the y to VS_LBT, so the 9-bit y can't wrap (the residual jump). Feet stay anchored (bottom tiles unchanged). */
@@ -943,7 +1064,7 @@ static void vs_billboard(int wx,int wy,int floorz,int base,int wt,int ht,int lo,
         *REG_VRAMMOD=1; *REG_VRAMADDR=ADDR_SCB1+spr*64;
         for(int r=t0;r<ht;r++){ int T=SPR_TILE0+base+r*wt+srctc;            /* draw source tiles t0..ht-1 (top-clipped) */
             *REG_VRAMRW=(u16)(T&0xFFFF); *REG_VRAMRW=(u16)((pal<<8)|(((T>>16)&0xF)<<4)|flip); }
-        if(vsh<255 && ndraw<16){ for(int r=ndraw;r<16;r++){ *REG_VRAMRW=(u16)(BLANK_TILE&0xFFFF); *REG_VRAMRW=(u16)(pal<<8); } }   /* FULL clear ndraw..15 (NOT the +4 wall-strip trim): actor SCB slots inherit TALLER stale chains from wall strips, so a heavily-shrunk far actor vshrink-over-reads into them = the 'large garbage trail under baddies'. Actors are few (~50) -> clearing the whole chain is cheap. */
+        vs_scb_clear_tail(spr,ndraw,pal);   /* PERF: blank only the stale tail past 'ndraw' (was: pad to 16). Same anti-trail safety via the high-water invariant on this shared slot range. */
         int cyf=(496-topy_d)&0x1FF;
         *REG_VRAMMOD=0x200; *REG_VRAMADDR=ADDR_SCB2+spr;
         *REG_VRAMRW=(u16)((hsh<<8)|vsh); *REG_VRAMRW=(u16)((cyf<<7)|ndraw); *REG_VRAMRW=(u16)((cx&0x1FF)<<7);
@@ -959,6 +1080,7 @@ static void vs_muzzle(void){
         *REG_VRAMMOD=1; *REG_VRAMADDR=ADDR_SCB1+spr*64;
         for(int r=0;r<SPR_FLASH_HT;r++){ int T=SPR_TILE0+SPR_FLASH_BASE+r*SPR_FLASH_WT+p;
             *REG_VRAMRW=(u16)(T&0xFFFF); *REG_VRAMRW=(u16)((SPR_FLASH_PAL<<8)|(((T>>16)&0xF)<<4)); }
+        vs_scb_clear_tail(spr,SPR_FLASH_HT,SPR_FLASH_PAL);   /* PERF: maintain the blank-tail invariant on this shared slot */
         *REG_VRAMMOD=0x200; *REG_VRAMADDR=ADDR_SCB2+spr;
         *REG_VRAMRW=(u16)((15<<8)|255); *REG_VRAMRW=(u16)((((496-fy)&0x1FF)<<7)|SPR_FLASH_HT); *REG_VRAMRW=(u16)((cx&0x1FF)<<7);
     }
@@ -981,6 +1103,7 @@ static void vs_hud_edges(void){
         *REG_VRAMMOD=1; *REG_VRAMADDR=ADDR_SCB1+spr*64;
         for(int r=0;r<2;r++){ int T=SPR_TILE0+E[e].base+r*E[e].wt;   /* col 0 of each edge sprite */
             *REG_VRAMRW=(u16)(T&0xFFFF); *REG_VRAMRW=(u16)((E[e].pal<<8)|(((T>>16)&0xF)<<4)); }
+        vs_scb_clear_tail(spr,2,E[e].pal);   /* PERF: maintain the blank-tail invariant on this shared slot */
         *REG_VRAMMOD=0x200; *REG_VRAMADDR=ADDR_SCB2+spr;
         *REG_VRAMRW=(u16)((15<<8)|255); *REG_VRAMRW=(u16)(((512-HUD_ROW*8)<<7)|2); *REG_VRAMRW=(u16)((E[e].hwx&0x1FF)<<7);
     }
@@ -1009,14 +1132,26 @@ static const sprrot_t SPOS_ROTB[5]={ SR(SPOS_B0), SR(SPOS_B1), SR(SPOS_B2), SR(S
 static const sprrot_t IMP_CORPSE[1]={ SR(IMPDM) };    /* imp corpse (TROOM0) */
 static const sprrot_t POSS_CORPSE[1]={ SR(POSSD) };   /* zombieman corpse (POSSL0 = DIE5) */
 static const sprrot_t SPOS_CORPSE[1]={ SR(SPOSD) };   /* shotgunner corpse (SPOSL0 = DIE5) */
+/* ITEM billboards (armour/ammo): 1 frame, no rotation/animation/corpse. The 'pal' field holds the item
+   INDEX (SPR_x_PAL = 0..NITEMPAL-1); the draw path adds the per-map base g_itembase to reach the slot. */
+static const sprrot_t ARM1_ROT[1]={ SR(ARM1) }; static const sprrot_t ARM2_ROT[1]={ SR(ARM2) }; static const sprrot_t BON2_ROT[1]={ SR(BON2) };
+static const sprrot_t CLIP_ROT[1]={ SR(CLIP) }; static const sprrot_t AMMO_ROT[1]={ SR(AMMO) }; static const sprrot_t SHEL_ROT[1]={ SR(SHEL) }; static const sprrot_t SBOX_ROT[1]={ SR(SBOX) };
+static const sprrot_t ROCK_ROT[1]={ SR(ROCK) }; static const sprrot_t BROK_ROT[1]={ SR(BROK) };
 #undef SR
-static const sprclass_t SPRCLASS[4]={ {1,SPR_BAR_PAL,BAR_ROT,0,0}, {5,SPR_IMP_PAL,IMP_ROTA,IMP_ROTB,IMP_CORPSE}, {5,SPR_POSS_PAL,POSS_ROTA,POSS_ROTB,POSS_CORPSE}, {5,SPR_SPOS_PAL,SPOS_ROTA,SPOS_ROTB,SPOS_CORPSE} };
+#define CLS_ITEM0 4   /* classes >= this are visible-billboard items: 'pal' = item index, g_itembase added at draw time; never shootable/killable */
+static const sprclass_t SPRCLASS[]={ {1,SPR_BAR_PAL,BAR_ROT,0,0}, {5,SPR_IMP_PAL,IMP_ROTA,IMP_ROTB,IMP_CORPSE}, {5,SPR_POSS_PAL,POSS_ROTA,POSS_ROTB,POSS_CORPSE}, {5,SPR_SPOS_PAL,SPOS_ROTA,SPOS_ROTB,SPOS_CORPSE},
+    {1,SPR_ARM1_PAL,ARM1_ROT,0,0}, {1,SPR_ARM2_PAL,ARM2_ROT,0,0}, {1,SPR_BON2_PAL,BON2_ROT,0,0},
+    {1,SPR_CLIP_PAL,CLIP_ROT,0,0}, {1,SPR_AMMO_PAL,AMMO_ROT,0,0}, {1,SPR_SHEL_PAL,SHEL_ROT,0,0}, {1,SPR_SBOX_PAL,SBOX_ROT,0,0},
+    {1,SPR_ROCK_PAL,ROCK_ROT,0,0}, {1,SPR_BROK_PAL,BROK_ROT,0,0} };
+#define NCLS ((int)(sizeof(SPRCLASS)/sizeof(SPRCLASS[0])))
 static int g_anim=0;   /* free-running actor animation clock (advanced each emitted frame) */
 static void vs_render(int px,int py,int ang,int emit){
     vs_px=px; vs_py=py; vs_fcs=VS_CS(ang); vs_fsn=VS_SN(ang); vs_emit=emit;
-    if(emit){ int tgt=vs_floor_at(px,py)+41; g_flooreye=tgt; vs_eye += (tgt-vs_eye)>>2; }   /* ease the eye up/down with the floor -> climb stairs; g_flooreye = the INSTANT (un-eased) ref the static LUT floor is drawn at, for actor feet */
+    if(emit){ int tgt=vs_floor_at(px,py)+41; g_flooreye=tgt; vs_eye += (tgt-vs_eye)>>2;
+              unsigned short cn=ve_root; while(!(cn&0x8000)){ long ccr=(long)(short)(px-ve_nx[cn])*ve_ndy[cn]-(long)(short)(py-ve_ny[cn])*ve_ndx[cn]; cn=(ccr>0)?ve_nr[cn]:ve_nl[cn]; } { int csec=ve_ssf[cn&0x7FFF]; g_cam_ffl=ve_ffl[csec]; g_cam_cfl=ve_cfl[csec]; } }   /* CAMERA-SECTOR floor+ceil flat (same single BSP descent as vs_floor_at; ceil is FREE here -> no second descent) -> the default near-floor / top-band-ceil flats for the stamp */
     { g_vpl=0; g_vpr=g_ncol-1; g_vpt=VS_LBT; g_vpb=VS_LBB; }   /* viewport crop NEUTRALISED (ditched) -> always full; g_vpw/g_vph are now FLOOR/CEILING murk (used in vs_lut) */
-    for(int c=0;c<g_ncol;c++){ vs_ct[c]=(c>=g_vpl&&c<=g_vpr)?g_vpt:(g_vpb+1); vs_cb[c]=g_vpb; vs_nstr[c]=0; vs_clY[c]=VS_LBB+1; vs_flY[c]=VS_LBT-1; vs_sky[c]=0; vs_skd[c]=0; vs_ffl[c]=0xFF; vs_cfl[c]=0xFF; vs_wdep[c]=0x7FFF; vs_stepd[c]=0x7FFF; if(g_zonal&&!g_generic){ for(int r=0;r<5;r++)vs_fdep[c][r]=-1; for(int r=0;r<7;r++)vs_cdep[c][r]=0x7FFF; } }   /* zonal reset (skipped when gen=1: the stamp is unread); ct/cb seed the VIEWPORT band ([g_vpt,g_vpb]); columns outside [g_vpl,g_vpr] start CLOSED (ct>cb) -> walls + BSP skip them = H letterbox */
+    for(int c=0;c<g_ncol;c++){ vs_ct[c]=(c>=g_vpl&&c<=g_vpr)?g_vpt:(g_vpb+1); vs_cb[c]=g_vpb; vs_nstr[c]=0; vs_clY[c]=VS_LBB+1; vs_flY[c]=VS_LBT-1; vs_sky[c]=0; vs_skd[c]=0; vs_ffl[c]=0xFF; vs_cfl[c]=0xFF; vs_wdep[c]=0x7FFF; vs_stepd[c]=0x7FFF; }   /* zonal depth reset (vs_fdep + vs_cdep) moved to the 20-wide block loop below (both block-indexed now). ct/cb seed the VIEWPORT band ([g_vpt,g_vpb]); columns outside [g_vpl,g_vpr] start CLOSED (ct>cb) -> walls + BSP skip them = H letterbox */
+    if(g_zonal&&!g_generic) for(int bk=0;bk<FLOORLUT_COLS;bk++){ for(int r=0;r<7;r++)vs_cdep[bk][r]=0x7FFF; for(int r=0;r<5;r++)vs_fdep[bk][r]=-1; }   /* zonal depth reset: ceiling(7)+floor(5), BLOCK-indexed 20-wide (was per-g_ncol = would OOB now) */
     for(int k=0;k<FLOORLUT_COLS;k++)vs_skyblk[k]=0;   /* SKY-IN-OPENING: clear the per-block dedup */
     vs_spr=41; vs_open=g_ncol; g_bbox_n=0; g_seg_n=0;
     if(emit && !g_hidehud) vs_hud_edges();   /* full-width HUD edge sprites at slots 41,42 -- BEFORE the wall budget so they're guaranteed */
@@ -1070,12 +1205,13 @@ static void vs_render(int px,int py,int ang,int emit){
             else if(d<bd[0]){ int j=0; while(j<MAXACT-1 && bd[j+1]>d){ bd[j]=bd[j+1]; bi[j]=bi[j+1]; j++; } bd[j]=d; bi[j]=i; }   /* full: evict the farthest, keep nearest N */
         }
         g_anim++; int aframe=(g_anim>>3)&1;                                /* idle/walk: toggle frame A/B every ~8 emitted frames */
-        for(int k=0;k<nb;k++){ int i=bi[k]; int cls=ve_thc[i]; if(cls>3)cls=0;
+        for(int k=0;k<nb;k++){ int i=bi[k]; int cls=ve_thc[i]; if(cls<0||cls>=NCLS)cls=0;
             const sprclass_t *sc=&SPRCLASS[cls]; int lump=0,mir=0; const sprrot_t *R;
             if(g_thalive[i]==2 && sc->corpse){ R=&sc->corpse[0]; }   /* CORPSE: static body on the ground, no rotation/animation */
             else { if(sc->nrot>1){ int av=vs_atan2(vs_py-ve_thy[i], vs_px-ve_thx[i]); int ri=((av-ve_tha[i]+16)&255)>>5; lump=ROTLUMP[ri]; mir=ROTMIR[ri]; }   /* 8-way rotation */
                    const sprrot_t *rot=(sc->rotB && aframe)?sc->rotB:sc->rotA; R=&rot[lump]; }   /* animate: A/B frame */
-            vs_billboard(ve_thx[i],ve_thy[i],ve_thz[i], R->base,R->wt,R->ht,R->lo,R->to, sc->pal, mir);
+            int pal=(cls>=CLS_ITEM0)?(g_itembase+sc->pal):sc->pal;   /* ITEMS: per-map palette (base + item index); actors: global 244+ slot */
+            vs_billboard(ve_thx[i],ve_thy[i],ve_thz[i], R->base,R->wt,R->ht,R->lo,R->to, pal, mir);
         }
         for(int f=0;f<NFX;f++){ if(!g_fxt[f])continue;   /* COMBAT: barrel-explosion FX (E->C->A) then free */
             short dx=(short)(g_fxx[f]-vs_px), dy=(short)(g_fxy[f]-vs_py);
@@ -1124,7 +1260,7 @@ static int vs_move_ok(int ax,int ay,int bx,int by){
 #define VS_AIM 36          /* aim-cone half-width: s*FOCAL <= VS_AIM*d  (36/160 ~= 12.7deg half -> ~25deg cone), forgiving + range-constant */
 #endif
 static void vs_fx_spawn(int x,int y,int z){ for(int f=0;f<NFX;f++) if(!g_fxt[f]){ g_fxx[f]=(short)x;g_fxy[f]=(short)y;g_fxz[f]=(short)z;g_fxt[f]=9; return; } }
-static unsigned char deadstate(int i){ int c=ve_thc[i]; if(c>3)c=0; return (ve_thc[i]!=0 && SPRCLASS[c].corpse)?2:0; }   /* 2 = leave a CORPSE (baddie with a death sprite); 0 = gone (barrel / no corpse frame) */
+static unsigned char deadstate(int i){ int c=ve_thc[i]; if(c<0||c>=NCLS)c=0; return (ve_thc[i]!=0 && SPRCLASS[c].corpse)?2:0; }   /* 2 = leave a CORPSE (baddie with a death sprite); 0 = gone (barrel / no corpse frame). Items never reach here (not shootable). */
 static void vs_kill_at(int i){
     if(i<0||i>=ve_nth||g_thalive[i]!=1) return;     /* only a LIVING thing can be killed (corpses=2 are inert) */
     g_thalive[i]=deadstate(i);                       /* baddie -> corpse(2); barrel/no-frame -> gone(0) */
@@ -1133,6 +1269,7 @@ static void vs_kill_at(int i){
     int q[16], qn=0; q[qn++]=i;
     while(qn>0){ int b=q[--qn]; vs_fx_spawn(ve_thx[b],ve_thy[b],ve_thz[b]);
         for(int j=0;j<ve_nth;j++){ if(g_thalive[j]!=1)continue;        /* only LIVING neighbours catch the blast */
+            if(ve_thc[j]>=CLS_ITEM0)continue;                          /* ITEMS: visible billboards, immune to barrel blasts */
             short dx=(short)(ve_thx[j]-ve_thx[b]), dy=(short)(ve_thy[j]-ve_thy[b]);
             if((long)dx*dx+(long)dy*dy < BLAST_RAD2){ g_thalive[j]=deadstate(j);   /* blast victim: corpse (baddie) or gone (barrel) */
                 if(ve_thc[j]==0 && qn<16) q[qn++]=j; } } }   /* a neighbour barrel chains; baddies in the blast leave bodies */
@@ -1141,6 +1278,7 @@ static int vs_shoot(int px,int py,int ang){
     int fcs=VS_CS(ang), fsn=VS_SN(ang);
     int best=-1, bestd=SHOOT_RANGE;
     for(int i=0;i<ve_nth;i++){ if(g_thalive[i]!=1)continue;   /* only LIVING things can be shot (corpses are inert) */
+        if(ve_thc[i]>=CLS_ITEM0)continue;                     /* ITEMS: visible billboards, not shootable */
         short dx=(short)(ve_thx[i]-px), dy=(short)(ve_thy[i]-py);
         int d=(int)(((long)dx*fcs+(long)dy*fsn)>>8);            /* forward depth */
         if(d<VS_NEAR || d>=bestd) continue;
@@ -1149,7 +1287,7 @@ static int vs_shoot(int px,int py,int ang){
         if(!vs_move_ok(px,py,ve_thx[i],ve_thy[i])) continue;   /* a solid wall / shut door blocks the shot */
         best=i; bestd=d; }
     if(best<0) return 0;
-    int sfx=(ve_thc[best]==0)?4:2;                 /* barrel -> boom, baddie -> scream */
+    int sfx=(ve_thc[best]==0)?4:((ve_thc[best]==1)?7:8);   /* barrel->boom(4); imp->imp-death(7, DSBGDTH1); possessed zombie/sergeant->possessed-death(8, DSPODTH1) */
     vs_kill_at(best); g_sndq=sfx; g_sndqt=2;       /* QUEUE the death SFX ~2 frames after the gun pop (sequence on the one channel) */
     return 1;
 }
@@ -1231,7 +1369,7 @@ int main(void){
     }
 #else
     ng_center_text( 6,0, "D O O M - N G");
-    ng_center_text( 9,0, "KNEE-DEEP IN THE DEAD");
+    ng_center_text( 9,0, "EPISODE 1");
 #endif
     ng_center_text(26,0, DNG_VERSION);
     SND(0x10+VE_NMAP);                                        /* TITLE: play the intro track (slot 9, after the 9 maps) -> switches to the map track at level start */
@@ -1317,14 +1455,20 @@ int main(void){
             u8 in=(u8)~(*REG_P1CNT);
             int fcs=VS_CS(ang), fsn=VS_SN(ang);
             int dx=0,dy=0, prevx=px, prevy=py;   /* prev pos for the walk-trigger crossing test */
+            if(!g_dbg){   /* movement FROZEN while the debug HUD is up -> WASD navigates the param grid instead (shuttle below) */
             if(in&CNT_UP){   dx+=(fcs*14)>>8; dy+=(fsn*14)>>8; }
             if(in&CNT_DOWN){ dx-=(fcs*14)>>8; dy-=(fsn*14)>>8; }
+            }
             /* per-axis slide, with a VS_RAD skin: test the destination extended by the radius in the
                travel direction so the camera stops VS_RAD short of the wall (no embedding) */
             if(dx){ int ex=dx+(dx>0?VS_RAD:-VS_RAD); if(vs_move_ok(px,py,px+ex,py)) px+=dx; }
             if(dy){ int ey=dy+(dy>0?VS_RAD:-VS_RAD); if(vs_move_ok(px,py,px,py+ey)) py+=dy; }
             vs_walk_triggers(prevx,prevy,px,py);   /* WALK-trigger doors: crossing a trigger seg opens its tagged door */
-            if(dx||dy||(in&(CNT_LEFT|CNT_RIGHT))) g_bobc++;   /* advance the gun-bob while walking OR TURNING (the author: bob on rotation too); holds steady only when fully still */
+            if(g_props) for(int i=0;i<ve_nth;i++){   /* ITEM PICKUP: walk over an armour/ammo billboard -> it vanishes + the DSITEMUP chime (SND 5). HUD counters are baked-static, so it's collect+chime only. */
+                if(g_thalive[i]!=1 || ve_thc[i]<CLS_ITEM0) continue;   /* alive items (cls>=4) only -- skip barrels/baddies/corpses */
+                short ix=(short)(ve_thx[i]-px), iy=(short)(ve_thy[i]-py);
+                if((long)ix*ix+(long)iy*iy < 1600L){ g_thalive[i]=0; SND(5); } }   /* within ~40u -> collected (chime; last pickup this frame wins the one SFX channel) */
+            if(!g_dbg && (dx||dy||(in&(CNT_LEFT|CNT_RIGHT)))) g_bobc++;   /* advance the gun-bob while walking OR TURNING (the author: bob on rotation too); holds steady only when fully still (and while debugging) */
             if(g_fire>0) g_fire--;                            /* FIRE recoil countdown */
             if(g_sndqt>0 && --g_sndqt==0) SND(g_sndq);        /* delayed death SFX (scream/boom) after the gun pop */
             if(g_doorstate==1){ g_doorprog+=6;
@@ -1336,8 +1480,8 @@ int main(void){
             else if(g_doorstate==3){ g_doorprog-=6; if(g_doorprog<=0){ g_secdc[g_doorsec]=0; g_doorsec=-1; g_doorstate=0; } else g_secdc[g_doorsec]=(short)g_doorprog; }   /* DOOR closing */
             if(g_liftstate==1){ g_liftprog-=6; if(g_liftprog<=g_lifttgt){g_liftprog=g_lifttgt; g_liftstate=2;} g_secdf[g_liftsec]=(short)g_liftprog; }   /* LIFT lowering toward the low stop (drop is <=0); holds DOWN until toggled */
             else if(g_liftstate==3){ g_liftprog+=6; if(g_liftprog>=0){ g_secdf[g_liftsec]=0; g_liftsec=-1; g_liftstate=0; } else g_secdf[g_liftsec]=(short)g_liftprog; }   /* LIFT raising back to rest */
-            if(in&CNT_LEFT)  ang=(ang+3)&255;   /* A = turn left */
-            if(in&CNT_RIGHT) ang=(ang-3)&255;   /* D = turn right */
+            if(!g_dbg && (in&CNT_LEFT))  ang=(ang+3)&255;   /* A = turn left (frozen while debug HUD up -> A navigates params left) */
+            if(!g_dbg && (in&CNT_RIGHT)) ang=(ang-3)&255;   /* D = turn right */
 #ifdef VS_AUTOPAN
             if(!(in&(CNT_UP|CNT_DOWN|CNT_LEFT|CNT_RIGHT))) ang=(ang+1)&255;   /* headless-capture demo only (build -DVS_AUTOPAN); off in play -> no idle drift */
 #endif
@@ -1346,14 +1490,20 @@ int main(void){
               if(pr&CNT_A){ g_dbg=!g_dbg;                   /* SPACE: show/hide the debug HUD (clean view + drops the HUD-render overhead) */
                 if(!g_dbg){ const char *bl="                                       "; g_vrambusy=1; for(int r=2;r<=12;r++)ng_text(2,r,1,bl); g_vrambusy=0; } }   /* clear the (now 9-row) HUD once on toggle-off */
               if(g_dbg){                                    /* TUNING: debug keys live ONLY while the HUD is shown (the author: game keys unmapped when debug enabled, debug keys unmapped when playing) */
-              if(pr&CNT_B) g_sel=(g_sel+1)%NSEL;            /* P: cycle WHICH debug param */
+              { int dp=0; for(int i=0;i<NDISP;i++) if(DSEL[i]==g_sel){ dp=i; break; }   /* WASD grid-nav the param table in DISPLAY order (4 cols): W/S = row up/down (+-4), A/D = col left/right (+-1, linear wrap); P still linear-cycles. N/M adjust the value below. */
+                if(pr&CNT_UP)    dp=(dp+NDISP-4)%NDISP;
+                if(pr&CNT_DOWN)  dp=(dp+4)%NDISP;
+                if(pr&CNT_LEFT)  dp=(dp+NDISP-1)%NDISP;
+                if(pr&CNT_RIGHT) dp=(dp+1)%NDISP;
+                if(pr&CNT_B)     dp=(dp+1)%NDISP;
+                g_sel=DSEL[dp]; }
               { int dd=(pr&CNT_D)?1:((pr&CNT_C)?-1:0);      /* B: value UP / N: value DOWN (bidirectional, wraps) */
                 if(dd) switch(g_sel){
                   case 0: g_dd   =(g_dd   +VS_NDD  +dd)%VS_NDD;   break;          /* draw distance */
                   case 1: g_dci  =(g_dci  +VS_NDC  +dd)%VS_NDC;   break;          /* depth cap */
                   case 2: g_ncoli=(g_ncoli+NNCOL   +dd)%NNCOL;    SND(1); break;  /* column res (20/32/40/64/80) */
-                  case 3: g_capmode=(g_capmode+NCAPMODE+dd)%NCAPMODE; break;      /* cap mode (caps back under control via the shuttle) */
-                  case 4: g_zonal=!g_zonal; break;                                /* ZONAL flats ON/OFF (A/B per-row visplane vs single-flat blanket) */
+                  case 3: g_capmode=(g_capmode+NCAPMODE+dd)%NCAPMODE; if(CAP_OPAQUE) vs_upload_cap_pals(); break;      /* cap mode; (re)assert the cap palettes on selecting TB32o so the overlay is coloured without a map reload */
+                  case 4: g_zonal=(g_zonal+1)%4; break;                           /* ZONAL flats: 0=off (blanket) / 1=zonal / 2=zonal+bias GREY-into-pit (boundary leans up; blue can't overlap out) / 3=zonal+bias PIT-into-grey (boundary leans down; the opposite lean to A/B) */
                   case 5: g_generic=!g_generic; break;                            /* GENERIC mode ON/OFF (synthetic floor/ceil + sky vs real flats) */
                   case 6: g_murkease=(g_murkease+NEASE+dd)%NEASE; break;          /* far-cull EASING gain 0(off)..16(ultra-gentle) */
                   case 7: g_weapon=(g_weapon+GUNHAND_N+dd)%GUNHAND_N; break;      /* WEAPON select: cycle the 6 first-person weapons */
@@ -1376,9 +1526,13 @@ int main(void){
                   case 23:g_radial=!g_radial; break;                                              /* RADIAL far-cull ON/OFF (uniform euclidean reach vs flat perpendicular slab) */
                   case 24:g_vmap=!g_vmap; break;                                                  /* VERTICAL MAP: V companion (1:1+tile+peg) vs original stretch */
                   case 26:g_perf=(g_perf+4+dd)%4; { const perfpreset_t *P=&PERF[g_perf]; g_ncoli=P->col; g_budgeti=P->bud; g_dd=P->dd; g_dci=P->dc; g_murkmin=P->mmin; g_floorlod=P->flod; g_ceillod=P->clod; } break;   /* PERF PRESET: apply the lo/md/hi/ul dial set */
-                  case 27:g_dd=11;g_dci=5;g_ncoli=0;g_murkmin=12;g_budgeti=8;g_fogext=14;g_floorlod=0;g_ceillod=0;g_vpw=0;g_vph=0;g_murkease=16;g_zonal=1;g_generic=1;g_occl=1;g_capmode=0;g_opensky=1;g_seamover=0;g_radial=0;g_vmap=1;g_hclip=0;g_perf=1;   /* RESET all tunables to defaults */
+                  case 27:g_dd=VS_NDD-1;g_dci=5;g_ncoli=0;g_murkmin=NMURKMIN-1;g_budgeti=8;g_fogext=14;g_floorlod=0;g_ceillod=0;g_vpw=0;g_vph=0;g_murkease=16;g_zonal=0;g_generic=1;g_occl=1;g_capmode=0;g_opensky=1;g_seamover=0;g_radial=0;g_vmap=1;g_hclip=0;g_lutcull=0;g_hwtail=1;g_perf=1;   /* RESET all tunables to defaults */
                   case 28:g_hclip=!g_hclip; break;                                                /* HEIGHT-CLIP flats to the nearest wall (anti-overspill; trades see-through far flats) */
                           if(FOGEXT[g_fogext]==0){g_fog0=g_fog1=32767;}else{g_fog0=(400*FOGEXT[g_fogext])/100;g_fog1=(1000*FOGEXT[g_fogext])/100;} g_murkbg=1; MMAP_PALBANK1[4095]=MURKBG[1]; break;
+                  case 29:g_lutcull=!g_lutcull; break;                                            /* LUT-CULL: park floor/ceiling LUT blocks fully hidden behind the nearest wall (A/B the cad/tile delta) */
+                  case 30:g_hwtail=!g_hwtail; break;                                              /* SCB TAIL-CLEAR: high-water (1) vs old pad-to-16 (0) -- A/B that high-water isn't slower */
+                  case 31:g_untex=!g_untex; break;                                                /* DEBUG: untextured sprite-budget view (see strip count + hw shrink) */
+                  case 32:g_flatdbg=!g_flatdbg; break;                                            /* DEBUG: flat-source view (solid colour per flat ID) */
                   default:g_map=(g_map+VE_NMAP+dd)%VE_NMAP; vs_set_map(g_map); px=vs_camx; py=vs_camy; ang=vs_camang; SND(0x10+g_map); break;   /* LEVEL: E1M1..E1M9 -> switch the map's soundtrack too (idx 25 = default) */
                 } }
               } else {                                      /* PLAYING: game keys live while the HUD is hidden */
@@ -1387,7 +1541,7 @@ int main(void){
                   if(a==2){ g_map=(g_map+1)%VE_NMAP; vs_set_map(g_map); px=vs_camx; py=vs_camy; ang=vs_camang; SND(0x10+g_map); }   /* EXIT switch -> next map (resync camera like the debug LEVEL path) */
                   else if(!a) vs_use_door(px,py,ang); }
               }
-              static const short DD[VS_NDD]={50,100,150,200,250,300,350,400,450,500,550,600,650,700,750,800,850,900,950,1000,1500,2000,2500,3000,3500,4000,4500,5000};   /* draw distance, world units; 50-steps from 50 to 1000, then 500-steps to 5000 (long vistas). default DD[11]=600 */
+              static const short DD[VS_NDD]={50,100,150,200,250,300,350,400,450,500,550,600,650,700,750,800,850,900,950,1000,1500,2000,2500,3000,3500,4000,4500,5000,6000,8000,12000,16000,32000};   /* draw distance, world units; 50-steps to 1000, 500-steps to 5000, then 6k/8k/12k/16k/32k. 32000 ~= whole-map (short-safe, g_vs_murk is int). default DD[11]=600 */
               static const short DC[VS_NDC]={1,2,3,4,5,6,7,8,16,32,48};       /* per-column see-through DEPTH cap (layers); fine low range 1..8 + originals; 48 ~= effectively unlimited */
               g_vs_murk=DD[g_dd]; g_dcap=DC[g_dci]; g_vs_budget=BUDGET[g_budgeti]; }   /* draw-count cap from the dial (param 13); 41+288 walls + actors < 380 HW slots = safe */
             g_floor_rows=FCLOD_F[g_floorlod]; g_ceil_rows=FCLOD_C[g_ceillod];   /* floor crop (param 11) + ceiling crop (param 16), independent */
@@ -1436,15 +1590,15 @@ int main(void){
               snprintf(tk[19],12,"cmrk=%d",g_vph);       snprintf(tk[20],12,"hgun=%d",g_hidegun);
               snprintf(tk[21],12,"hhud=%d",g_hidehud);   snprintf(tk[22],12,"dwlk=%d",g_doorwalk);
               snprintf(tk[23],12,"rad=%d",g_radial);      snprintf(tk[24],12,"vmap=%d",g_vmap);   snprintf(tk[25],12,"lvl=%d",g_map+1);
-              snprintf(tk[26],12,"pf=%s",PERFNM[g_perf]); snprintf(tk[27],12,"rset");   snprintf(tk[28],12,"hclp=%d",g_hclip);
+              snprintf(tk[26],12,"pf=%s",PERFNM[g_perf]); snprintf(tk[27],12,"rset");   snprintf(tk[28],12,"hclp=%d",g_hclip); snprintf(tk[29],12,"lcul=%d",g_lutcull); snprintf(tk[30],12,"hwt=%d",g_hwtail); snprintf(tk[31],12,"untx=%d",g_untex); snprintf(tk[32],12,"fdbg=%d",g_flatdbg);
               int deg=(ang*360)>>8;
               g_vrambusy=1;
               snprintf(ln,sizeof ln,"fps=%-3d w=%-3d ns=%-3d t=%-4d ",cad?60/cad:60,worst?60/worst:60,vs_spr-41,g_vs_tiles); ng_text(2,2,1,ln);   /* perf: fps + worst + strips + tile-rows */
               for(int row=0;row<8;row++){ int p=0;       /* 29 params, 4 per row -> 8 rows (rows 3..10, clear of the gun band at 15); caret marks g_sel */
-                for(int col=0;col<4;col++){ int idx=row*4+col; if(idx>=NSEL)break;
+                for(int col=0;col<4;col++){ int dpos=row*4+col; if(dpos>=NDISP)break; int idx=DSEL[dpos];   /* DSEL = display order (rset dropped; hclp sits before the pf preset on the last row) */
                   p+=snprintf(ln+p,sizeof(ln)-p,"%c%-8s",(idx==g_sel)?'>':' ',tk[idx]); }   /* caret + 8-char token = 9/col x4 = 36 cols (fits the 1..38 visible fix range) */
                 while(p<36 && p<(int)sizeof(ln)-1)ln[p++]=' '; ln[p]=0; ng_text(2,3+row,1,ln); }
-              snprintf(ln,sizeof ln,"x%d y%d a%d d%d-%d        ",px,py,deg,g_vs_dmin>g_vs_dmax?0:g_vs_dmin,g_vs_dmax); ng_text(2,11,1,ln);   /* WAD coords+deg for refcap; d = drawn depth range (row 11: below the 8 param rows) */
+              snprintf(ln,sizeof ln,"x%d y%d a%d ffl=%d bfl=%d ",px,py,deg,g_dbg_ffl,g_dbg_bfl); ng_text(2,11,1,ln);   /* WAD coords+deg + FLAT-DBG: centre column nearest-seg front/back floor flat (aim at a mis-coloured spot, read which flat is latched) */
 #ifdef VS_DIAG
               { char d[44]; int p2=snprintf(d,sizeof d,"ns%d sg%d nr%d fr%d bk%d of%d bd%d ",vs_spr-41,g_seg_n,g_cull_near,g_cull_frus,g_cull_back,g_cull_off,g_cull_bud);
                 while(p2<40)d[p2++]=' '; d[p2]=0; ng_text(2,12,1,d); }   /* strips / segs-projected / per-cull-path tallies (row 12: below the all-fields HUD + coords) */

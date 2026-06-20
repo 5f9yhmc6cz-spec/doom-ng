@@ -656,6 +656,81 @@ if "--ramps" in sys.argv:
         subprocess.run([_TILETOOL, "--sprite", "-c", gifp, "-o", c1p, c2p], check=True, env=_ttenv)
         c1d = open(c1p, 'rb').read(); c2d = open(c2p, 'rb').read()
         ramp_c1 += c1d; ramp_c2 += c2d; base += len(c1d) // 64
+    # === OPAQUE-CORNER cap OVERLAY wedges (NEW cap mode TB32o) ================================
+    # The in-strip caps bevel a sloped edge by baking the corner PAST the diagonal as index 0
+    # (HARDWARE-TRANSPARENT) -> the floor/ceiling LUT shows through, but the LUT is on a 16px
+    # grid that can't follow the diagonal -> a stepped "picket fence" seam. The OPAQUE-CORNER
+    # mode leaves the wall strip plain (no in-strip caps) and instead lays a SEPARATE overlay
+    # sprite over the wall's top/bottom corner: the overlay is SOLID (index 1) ABOVE the
+    # diagonal and TRANSPARENT (index 0) below it -- the exact INVERSE of the in-strip cap.
+    # Drawn with a cap palette whose index 1 = the mean ceiling colour (top) / floor colour
+    # (bottom), the solid wedge MERGES with the ceiling/floor so the wall silhouette reads as a
+    # clean diagonal with nothing showing through.  PER-SLOPE only (16px-wide; the mask repeats
+    # every 16px -> reused for every tcol; texture-INdependent; no NSHIFT phases -- the solid/
+    # transparent mask does not depend on the wall's horizontal U-shift). Same -|d| canonical
+    # baking + flip derivation as the in-strip caps (top(-d)=00, top(+d)=H, bottom(+d)=V,
+    # bottom(-d)=HV), so the cart reuses rtfl/rbfl verbatim. Appended AFTER the ramps + before
+    # the AVG mip -> the AVG/TITLE/MENU TILE0s (which sum 'base'/'abase') re-anchor on re-bake.
+    RAMP_OVL_TILE0 = RAMP_TILE0 + base
+    ramp_ovl_off = [-1]*RAMP_NDROP            # overlay tile-offset (from RAMP_OVL_TILE0) per quantized slope; -1 = none
+    ovl_base = 0
+    ovl_slopes = sorted({ -abs(d) for (t, d, e) in combos })   # canonical negative |d| (combos already canonicalized to (-|d|,0))
+    ovl_c1 = b""; ovl_c2 = b""
+    for d in ovl_slopes:                       # d<=0; bake the NEGATIVE-slope TOP wedge, cart flips for +d / bottom
+        ad = abs(d); nt = max(1, (ad+15)//16)  # stack height: 1 tile per 16px of drop (matches the cap stack)
+        sheet = bytearray(16 * nt * 16)        # nt stacked 16x16 tiles (k=0 nearest the corner)
+        for k in range(nt):
+            for y in range(16):
+                for x in range(16):
+                    xi = x & 15
+                    el = (ad*(15-xi))//15 - k*16   # d<0 branch of the cap's top 'el'; SOLID where the cap is TRANSPARENT (y<el)
+                    sheet[(k*16 + y)*16 + x] = 1 if y < el else 0
+        ovlpal = [0,0,0, 255,255,255] + [0]*42  # grey index-1 placeholder (recoloured by the cart cap palette at draw)
+        img = Image.frombytes('P', (16, nt*16), bytes(sheet)); img.putpalette(ovlpal)
+        gifp = "%s/rampovl_%d.gif" % (tmpd, ad); img.save(gifp, optimize=False)
+        c1p = "%s/rampovl_%d.c1" % (tmpd, ad); c2p = "%s/rampovl_%d.c2" % (tmpd, ad)
+        subprocess.run([_TILETOOL, "--sprite", "-c", gifp, "-o", c1p, c2p], check=True, env=_ttenv)
+        c1d = open(c1p, 'rb').read(); c2d = open(c2p, 'rb').read()
+        ovl_c1 += c1d; ovl_c2 += c2d
+        ramp_ovl_off[d - RAMP_DMIN] = ovl_base
+        if -d <= RAMP_DMAX: ramp_ovl_off[-d - RAMP_DMIN] = ovl_base   # +d shares the wedge (cart h-flips)
+        ovl_base += len(c1d) // 64
+    ramp_c1 += ovl_c1; ramp_c2 += ovl_c2; base += ovl_base
+    # === cap PALETTES: index 1 = mean CEILING flat colour (top caps) / mean FLOOR flat colour
+    #     (bottom caps). Mean RGB over E1's distinct ceiling/floor flats' raw pixels -> NG RGB444.
+    #     Index 0 stays transparent; indices 2..15 a dark ramp toward index 1 (unused by the wedge
+    #     -- the wedge is index 0/1 only -- but kept sensible). Emitted as CAP_CEIL_PAL/CAP_FLOOR_PAL.
+    _ceil_flats, _floor_flats = set(), set()
+    for (fl, ce, li, ff, cf) in sectors:
+        if ff: _floor_flats.add(ff.upper())
+        if cf and cf != "F_SKY1": _ceil_flats.add(cf.upper())
+    def _mean_flat_rgb(names):
+        rs = gs = bs = n = 0
+        for nm2 in names:
+            fi = flatid.get(nm2, -1)
+            if fi < 0: continue
+            _w, _h, grid, _m = texlist[fi]
+            for row in grid:
+                for idx in row:
+                    if idx < 0: continue
+                    r, g, b = PALRGB[idx]; rs += r; gs += g; bs += b; n += 1
+        if n == 0: return (96, 96, 96)
+        return (rs//n, gs//n, bs//n)
+    def _cap_pal16(rgb):                        # 16-colour NG palette: 0 transparent, 1 = flat colour, 2..15 dark ramp toward it
+        r, g, b = rgb
+        out = [0x8000]                          # index 0: transparent (bit15)
+        def _ng(r2, g2, b2):
+            r5, g5, b5 = r2 >> 3, g2 >> 3, b2 >> 3
+            return ((r5 & 1) << 14) | ((g5 & 1) << 13) | ((b5 & 1) << 12) | ((r5 >> 1) << 8) | ((g5 >> 1) << 4) | (b5 >> 1)
+        out.append(_ng(r, g, b))                # index 1: the representative flat colour (the ONLY one the wedge uses)
+        for i in range(2, 16):                  # 2..15: a dark ramp (sensible filler; unused by the index-0/1 wedge)
+            f = (15 - i) / 13.0
+            out.append(_ng(int(r*f), int(g*f), int(b*f)))
+        return out
+    CAP_CEIL_PAL = _cap_pal16(_mean_flat_rgb(_ceil_flats))
+    CAP_FLOOR_PAL = _cap_pal16(_mean_flat_rgb(_floor_flats))
+    print("cap overlay: OVL_TILE0=%d, %d wedge tiles; ceil=%s floor=%s" % (
+        RAMP_OVL_TILE0, ovl_base, _mean_flat_rgb(_ceil_flats), _mean_flat_rgb(_floor_flats)))
     # === LOD vertical-average mip ============================================================
     # A 1-tile-tall strip per texture where each texel COLUMN is the vertical AVERAGE of that
     # texture column (mean RGB -> nearest palette colour). Distant walls collapse to a single
@@ -831,6 +906,14 @@ if "--ramps" in sys.argv:
         for t in range(len(texlist)):
             f.write("{" + ",".join("{%d,%d}" % (ramp_off[t][d][0], ramp_off[t][d][1]) for d in range(RAMP_NDROP)) + "},\n")
         f.write("};\n")
+        f.write("/* OPAQUE-CORNER cap OVERLAY (cap mode TB32o): per-slope solid-above/transparent-below wedge,\n"
+                "   drawn over the wall corner with a cap palette (idx1 = mean ceiling/floor colour) so the bevel\n"
+                "   merges with the ceiling/floor instead of revealing the gridded LUT. Tile = RAMP_OVL_TILE0 +\n"
+                "   RAMP_OVL_OFF[slope-RAMP_DMIN] + k (stack tile, k=0 nearest the corner). -1 = no wedge. */\n")
+        f.write("#define RAMP_OVL_TILE0 %d\n" % RAMP_OVL_TILE0)
+        f.write("static const int RAMP_OVL_OFF[%d]={%s};\n" % (RAMP_NDROP, ",".join(str(v) for v in ramp_ovl_off)))
+        f.write("static const unsigned short CAP_CEIL_PAL[16]={%s};\n" % ",".join("0x%04X" % v for v in CAP_CEIL_PAL))
+        f.write("static const unsigned short CAP_FLOOR_PAL[16]={%s};\n" % ",".join("0x%04X" % v for v in CAP_FLOOR_PAL))
         f.write("/* LOD: collapsed far walls (cot==1) sample the vertical-average strip at AVG_TILE0+AVG_OFF[tex]+shift*wt+tcol */\n")
         f.write("#define AVG_TILE0 %d\n" % AVG_TILE0)
         f.write("static const int AVG_OFF[%d]={%s};\n" % (len(texlist), ",".join(str(avg_off[t]) for t in range(len(texlist)))))
@@ -937,10 +1020,19 @@ for _mon, _b in (("IMP", "TROO"), ("POSS", "POSS"), ("SPOS", "SPOS")):
         spr_want.append(("%s_B%d" % (_mon, _ri), _b + _suf, 0, _mon))
 spr_c1 = bytearray(); spr_c2 = bytearray(); sprbase = 0; sprmeta = []
 spr_paldb = {}; spr_nextpal = 0          # tag -> (local, remap, pal16, palslot)
+# BILLBOARD 2x: the Neo Geo shrinks sprites but CAN'T magnify them, so close/mid billboards rendered at
+# source-pixel size = ~0.7 of true perspective height. Bake the world billboards at 2x source -> the cart's
+# vs_billboard /512 size math (cap 512) reaches true size for depth>=80 (shrink-only). The HUD/gun sprites
+# below draw 1:1 (they do NOT go through vs_billboard), so they stay native. (HUDNUM/HEDGER are baked in their
+# own blocks further down and are also 1:1.) Keep this set in sync with vs_billboard's /512 in neogeo/main.c.
+HUD1X = {"PISTOL", "STBAR", "FLASH", "FACE", "FACEL", "FACER", "FACEG"}
 for tag, lname, opaque, palfrom in spr_want:
     try: pb = glump(lname)
     except Exception: print("  sprite %s (%s) not found, skipping" % (tag, lname)); continue
     w, h, lo, to, grid = parse_patch(pb)
+    if tag not in HUD1X:                                     # world billboard -> 2x source (nearest-neighbour)
+        w, h, lo, to = w * 2, h * 2, lo * 2, to * 2
+        grid = [[grid[y >> 1][x >> 1] for x in range(w)] for y in range(h)]
     if palfrom and palfrom in spr_paldb:
         local, remap, pal16, palslot = spr_paldb[palfrom]
     else:
@@ -1020,15 +1112,60 @@ _c1p = "%s/spr_HEDGER.c1" % tmpd; _c2p = "%s/spr_HEDGER.c2" % tmpd
 subprocess.run([_TILETOOL, "--sprite", "-c", _gp, "-o", _c1p, _c2p], check=True, env=_ttenv)
 _c1d = open(_c1p, 'rb').read(); _c2d = open(_c2p, 'rb').read(); spr_c1 += _c1d; spr_c2 += _c2d
 sprmeta.append(("HEDGER", sprbase, 1, 2, 16, 32, 0, 0, _p16, _ps)); sprbase += len(_c1d) // 64
+# ---- ITEM billboards (armour + ammo): each gets its OWN tiles (appended to the sprite chain tail) +
+#      its OWN 16-colour palette, but the palette is NOT a global 244+ slot (those are full). Instead
+#      palettes are emitted into ITEMPAL16[] and uploaded PER-MAP after the flats (slots <=243) by
+#      vs_upload_tex_pals in main.c -- mirroring the per-map flat-palette path. palslot is stored as a
+#      NEGATIVE marker (-1-itemidx) so the header emit routes them to ITEM_PAL/ITEMPAL16 not 244+. ----
+item_want = [("ARM1","ARM1A0"),("ARM2","ARM2A0"),("BON2","BON2A0"),      # armour: green, blue, helmet bonus
+             ("CLIP","CLIPA0"),("AMMO","AMMOA0"),("SHEL","SHELA0"),("SBOX","SBOXA0"),  # bullets, shells
+             ("ROCK","ROCKA0"),("BROK","BROKA0")]          # rockets (CELL/CELP omitted: not in shareware doom1.wad -- no plasma/BFG ammo in E1)
+item_pal16 = []
+for tag, lname in item_want:
+    try: pb = glump(lname)
+    except Exception: print("  item %s (%s) not found, skipping" % (tag, lname)); continue
+    w, h, lo, to, grid = parse_patch(pb)
+    w, h, lo, to = w * 2, h * 2, lo * 2, to * 2             # items are world billboards -> 2x source (see HUD1X note)
+    grid = [[grid[y >> 1][x >> 1] for x in range(w)] for y in range(h)]
+    used = [idx for idx, _ in Counter(p for r in grid for p in r if p >= 0).most_common(15)]
+    local, remap = remap15(used)
+    pal16 = [0] * 16
+    for idx, i in local.items():
+        r, g, b = PALRGB[idx]; r5, g5, b5 = r >> 3, g >> 3, b >> 3
+        pal16[i] = ((r5 & 1) << 14) | ((g5 & 1) << 13) | ((b5 & 1) << 12) | ((r5 >> 1) << 8) | ((g5 >> 1) << 4) | (b5 >> 1)
+    wp = ((w + 15) // 16) * 16; hp = ((h + 15) // 16) * 16
+    px = bytearray(wp * hp)                                  # index 0 = transparent
+    for y in range(h):
+        for x in range(w):
+            v = grid[y][x]; px[y * wp + x] = remap[v] if v >= 0 else 0
+    img = Image.frombytes('P', (wp, hp), bytes(px))
+    img.putpalette(sum([[((pal16[i] >> 8) & 0xF) * 17, ((pal16[i] >> 4) & 0xF) * 17, (pal16[i] & 0xF) * 17] for i in range(16)], []))
+    gifp = "%s/spr_%s.gif" % (tmpd, tag); img.save(gifp, optimize=False)
+    c1p = "%s/spr_%s.c1" % (tmpd, tag); c2p = "%s/spr_%s.c2" % (tmpd, tag)
+    subprocess.run([_TILETOOL, "--sprite", "-c", gifp, "-o", c1p, c2p], check=True, env=_ttenv)
+    c1d = open(c1p, 'rb').read(); c2d = open(c2p, 'rb').read()
+    spr_c1 += c1d; spr_c2 += c2d
+    sprmeta.append((tag, sprbase, wp // 16, hp // 16, w, h, lo, to, pal16, -1 - len(item_pal16)))   # palslot<0 = item idx marker
+    item_pal16.append(pal16)
+    sprbase += len(c1d) // 64
 open(os.path.join(ngdir, "sprites.c1"), "wb").write(spr_c1)
 open(os.path.join(ngdir, "sprites.c2"), "wb").write(spr_c2)
 with open(os.path.join(ngdir, "sprites.h"), "w") as f:
     f.write("/* generated by wad2c.py -- demo sprites; absolute tile = SPR_TILE0 + SPR_x_BASE + r*SPR_x_WT + col */\n")
     f.write("#define SPR_COUNT %d\n" % len(sprmeta))
     for i, (tag, base, wt, ht, w, h, lo, to, pal16, palslot) in enumerate(sprmeta):
+        # palslot>=0 -> global sprite palette slot (244+); palslot<0 -> ITEM: SPR_x_PAL = item index
+        # (the runtime per-map base g_itembase is ADDED in the draw path), palette comes from ITEMPAL16[].
+        palval = (244 + palslot) if palslot >= 0 else (-1 - palslot)
         f.write("#define SPR_%s_BASE %d\n#define SPR_%s_WT %d\n#define SPR_%s_HT %d\n#define SPR_%s_W %d\n#define SPR_%s_H %d\n#define SPR_%s_LO %d\n#define SPR_%s_TO %d\n#define SPR_%s_PAL %d\n"
-                % (tag, base, tag, wt, tag, ht, tag, w, tag, h, tag, lo, tag, to, tag, 244 + palslot))
+                % (tag, base, tag, wt, tag, ht, tag, w, tag, h, tag, lo, tag, to, tag, palval))
         f.write("static const unsigned short SPR_%s_PAL16[16]={%s};\n" % (tag, ",".join("0x%04X" % c for c in pal16)))
+    # per-map ITEM palettes (armour/ammo): uploaded after the flats by vs_upload_tex_pals; index = SPR_x_PAL.
+    f.write("#define NITEMPAL %d\n" % len(item_pal16))
+    f.write("static const unsigned short ITEMPAL16[%d][16]={\n" % max(1, len(item_pal16)))
+    for p in (item_pal16 or [[0] * 16]):
+        f.write(" {%s},\n" % ",".join("0x%04X" % c for c in p))
+    f.write("};\n")
 print("baked %d sprites into C-ROM (%d tiles): %s" % (len(sprmeta), sprbase, ",".join(m[0] for m in sprmeta)))
 
 print("%s: %d verts %d sectors %d sides %d lines %d segs %d nodes %d things | %d textures, crom %d KB"

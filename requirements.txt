@@ -1,15 +1,20 @@
-# DOOM-NG asset pipeline (tools/wad2c.py) uses ONLY the Python 3.8+ standard
-# library (struct, sys, os, collections) -- there are no pip dependencies, so
-# this file is intentionally empty of packages.
+# DOOM-NG asset pipeline (tools/*.py) -- Python package dependencies.
 #
-# The real requirements are system-level; install them with your OS package
-# manager (see README.md), not pip:
+#   pip install -r requirements.txt
 #
-#   - a C compiler (gcc / clang) and make
-#   - SDL2            (libsdl2-dev / sdl2)        -- host window
-#   - ImageMagick     (the `magick` command)      -- optional, for `make dump`
-#   - Python 3.8+                                  -- tools/wad2c.py
-#   - doom1.wad       (Doom shareware, bring your own)
+# These are the pip packages the asset bakers import. Everything ELSE the build
+# needs is SYSTEM-level (install with your OS package manager -- see README.md):
 #
-# For the Neo Geo cartridge build you additionally need ngdevkit:
-#   https://github.com/dciabrin/ngdevkit
+#   - ngdevkit      Neo Geo toolchain (m68k-neogeo-elf-gcc, Z80 tools, tiletool.py,
+#                   open BIOS, ngdevkit-gngeo)   https://github.com/dciabrin/ngdevkit
+#   - a C compiler (gcc/clang) + make            -- builds the host baker (doomng-host)
+#   - SDL2 (libsdl2-dev / sdl2)                  -- doomng-host window
+#   - Python 3.11+   (the bakers AND ngdevkit's tiletool.py need it -- tiletool imports typing.Self)
+#   - doom1.wad  (DOOM shareware -- bring your own; not redistributed here)
+#   - ImageMagick (optional, the `magick` command -- for `make dump`)
+#   - MAME (optional)                            -- cycle-accurate hardware validation
+
+Pillow>=9        # tile/sprite quantisation + image I/O in the bakers (wad2c, *lut, gunbake, ...)
+numpy            # buffer maths in wad2c and the dev profiling tools
+
+# vizdoom        # OPTIONAL -- only tools/refcap.py (the reference frame-match dev harness)

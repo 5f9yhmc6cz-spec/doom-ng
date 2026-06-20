@@ -136,13 +136,21 @@ def extract_map(MAP):
 
 # THING type -> class enum (single source of truth, emitted as CLS_* into vs_e1.h). S2 = barrels only;
 # monsters/items get added in later milestones (M3/M5/L1) -- the cart's SPRCLASS[] table indexes this.
-THING_CLASS={2035:0, 3001:1, 3004:2, 9:3}   # barrel, imp, former-human(zombie), shotgun-guy(sergeant)
+THING_CLASS={2035:0, 3001:1, 3004:2, 9:3,                 # barrel, imp, former-human(zombie), shotgun-guy(sergeant)
+             2018:4, 2019:5, 2015:6,                       # ARMOUR: green(ARM1), blue(ARM2), helmet bonus(BON2)
+             2007:7, 2048:8, 2008:9, 2049:10,              # AMMO: clip, bullet box, shells, shell box
+             2010:11, 2046:12}                             # AMMO: rocket, rocket box
+                                                            # classes 4..12 = "visible billboard" items (drawn, not collectible) -- see SPRCLASS in main.c.
+                                                            # (CELL 2047 / CELP 17 omitted: no plasma/BFG ammo sprites in shareware doom1.wad)
 DOORSP={1,26,27,28,31,32,33,34,117,118}      # DOOR linedef specials (manual/keyed/fast); used to flag openable segs
 EXITSP={11,51,52,124}                         # EXIT linedef specials (S1/secret switch exit, W1/secret walk exit) -> USE advances to the next map
 LIFTSP={10,21,62,88,120,121,122,123,18,22,69,95,119,128}   # LIFT + raise-floor specials -> USE toggles the back sector FLOOR up/down
 WALKDOOR={2,4,86,90,105,106,108,109}                       # WALK-trigger OPEN-door specials (W1/WR) -> crossing the line raises the TAG-resolved door sector (open-stay)
 SWDOOR={29,61,63,103,111,112,114,115}                      # SWITCH-trigger OPEN-door specials (S1/SR) -> USE the switch raises the TAG-resolved door sector (open-stay)
-CLASS_NAMES=["CLS_BAR","CLS_IMP","CLS_POSS","CLS_SPOS"]
+CLASS_NAMES=["CLS_BAR","CLS_IMP","CLS_POSS","CLS_SPOS",
+             "CLS_ARM1","CLS_ARM2","CLS_BON2",
+             "CLS_CLIP","CLS_AMMO","CLS_SHEL","CLS_SBOX",
+             "CLS_ROCK","CLS_BROK"]
 
 MAPS=[f"E{EPISODE}M{m}" for m in range(1,10) if any(d[0]==f"E{EPISODE}M{m}" for d in D)]
 md=[extract_map(M) for M in MAPS]

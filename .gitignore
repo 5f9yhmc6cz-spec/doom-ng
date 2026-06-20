@@ -46,30 +46,3 @@ neogeo/tools/gngeo-dor
 tools/gngeo-shot/
 midi/
 neogeo/midi/
-
-# --- DOOM-derived generated assets (regenerated from your doom1.wad by `make rom-vs`) ---
-# NEVER commit these: it would redistribute id Software content.
-/doom1.wad
-*.wad
-src/map.c
-neogeo/textiles.h
-neogeo/ramps.h
-neogeo/ceillut.h
-neogeo/titlepic.h
-neogeo/texpal.h
-neogeo/menu.h
-neogeo/vs_e1.h
-neogeo/vsflat.h
-neogeo/sprites.h
-neogeo/hudfix.h
-neogeo/gunhand.h
-neogeo/floorlut.h
-neogeo/vsfloor.h
-neogeo/vsceil.h
-neogeo/snd_*.adpcma
-neogeo/snd_*.wav
-*.adpcmb
-path_nodes.txt
-ramps_used.txt
-flat_gallery/*.png
-dist/

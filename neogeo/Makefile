@@ -222,7 +222,7 @@ $(MROM1): $(SOUND_DRIVER)
 
 # V-ROM = 10 ADPCM-B tracks (E1M1..E1M9 then the intro/title track e1mi, 512KB each = 5MB) then the
 # ADPCM-A SFX. Track k lives at byte k*512KB (k=9 = intro); the SFX follow at 0x500000 (doomsnd _sfxtab matches).
-$(VROM1): e1m1.adpcmb e1m2.adpcmb e1m3.adpcmb e1m4.adpcmb e1m5.adpcmb e1m6.adpcmb e1m7.adpcmb e1m8.adpcmb e1m9.adpcmb e1mi.adpcmb snd_pistol.adpcma snd_impdeath.adpcma snd_boom.adpcma snd_itemup.adpcma snd_dooropn.adpcma
+$(VROM1): e1m1.adpcmb e1m2.adpcmb e1m3.adpcmb e1m4.adpcmb e1m5.adpcmb e1m6.adpcmb e1m7.adpcmb e1m8.adpcmb e1m9.adpcmb e1mi.adpcmb snd_pistol.adpcma snd_impdeath.adpcma snd_boom.adpcma snd_itemup.adpcma snd_dooropn.adpcma snd_impdth.adpcma snd_posdth.adpcma
 	cat $^ > $@ && ln -sf $(notdir $@) $(ROM)/202-v1.bin
 # Music provenance: the e1m*.adpcmb are NOT shipped (id/Bobby Prince copyright). Regenerate all 9
 # from the WAD with `sh tools/genmusic.sh` (doom1.wad + a soundfont -> mus2mid -> fluidsynth ->

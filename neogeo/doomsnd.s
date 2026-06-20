@@ -68,6 +68,14 @@ _notitem:
         jr      nz, _notdoor
         ld      b, #5                ; cmd 6 -> SFX index 4 (door open/close)
 _notdoor:
+        cp      #7
+        jr      nz, _notimpd
+        ld      b, #6                ; cmd 7 -> SFX index 5 (imp death, DSBGDTH1)
+_notimpd:
+        cp      #8
+        jr      nz, _nothumd
+        ld      b, #7                ; cmd 8 -> SFX index 6 (possessed death, DSPODTH1)
+_nothumd:
         dec     b                    ; -> 0-based SFX index
         call    _sfx
         jr      _idle
@@ -121,6 +129,8 @@ _sfxtab:
         .db     0x1c, 0x50, 0x40, 0x50   ; 3: boom    0x501C-0x5040 (37 blk)
         .db     0x41, 0x50, 0x45, 0x50   ; 4: itemup  0x5041-0x5045 (5 blk)
         .db     0x46, 0x50, 0x60, 0x50   ; 5: door    0x5046-0x5060 (27 blk, DSDOROPN)
+        .db     0x61, 0x50, 0x6e, 0x50   ; 6: impdth  0x5061-0x506E (14 blk, DSBGDTH1)
+        .db     0x6f, 0x50, 0x88, 0x50   ; 7: posdth  0x506F-0x5088 (26 blk, DSPODTH1)
 
         ;; --- music: program + start ADPCM-B (set A: 0x10..0x1b), hardware loop ---
 _music:                              ; B = track index 0..8 (each track = 512KB = 0x800 in 256B addr units)
