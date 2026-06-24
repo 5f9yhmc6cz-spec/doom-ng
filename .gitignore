@@ -66,6 +66,7 @@ neogeo/textiles.h
 neogeo/ramps.h
 neogeo/ceillut.h
 neogeo/titlepic.h
+neogeo/interpic.h
 neogeo/texpal.h
 neogeo/menu.h
 neogeo/vs_e1.h
@@ -76,6 +77,8 @@ neogeo/gunhand.h
 neogeo/floorlut.h
 neogeo/vsfloor.h
 neogeo/vsceil.h
+neogeo/fbsolid.h
+neogeo/fogcm.h
 neogeo/nodes_data.h
 neogeo/nodes_data.c
 neogeo/nodes_idx.c

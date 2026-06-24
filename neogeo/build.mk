@@ -27,7 +27,7 @@ ROM?=$(call err,ROM)
 # A cartrige is made of one or several chips, as defined in rom.mk
 # add all possible dependencies below (undefined chips are just ignored)
 CART?=$(ROM)/$(GAMEROM).zip
-$(CART): $(PROM1) $(PROM2)
+$(CART): $(PROM1)   # PROM2 (the dead 8MB on-rails NODES bank) retired -- the live BSP never read it; the gngeo datafile already excludes the P2 region
 $(CART): $(MROM1)
 $(CART): $(CROM1) $(CROM2) $(CROM3) $(CROM4) $(CROM5) $(CROM6) $(CROM7) $(CROM8)
 $(CART): $(SROM1)

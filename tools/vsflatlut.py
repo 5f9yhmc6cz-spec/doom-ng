@@ -23,12 +23,29 @@ data = open(WAD, "rb").read()
 _, n, diro = struct.unpack_from("<4sii", data, 0)
 D = [struct.unpack_from("<ii8s", data, diro + i * 16) for i in range(n)]
 nm = [d[2].rstrip(b"\0").decode("latin1") for d in D]
-t1 = [i for i, x in enumerate(nm) if x == "TEXTURE1"][0]; tb = data[D[t1][0]:D[t1][0] + D[t1][1]]
-tex1 = set()
-for i in range(struct.unpack_from("<i", tb, 0)[0]):
-    o = struct.unpack_from("<i", tb, 4 + i * 4)[0]
-    tex1.add(tb[o:o + 8].split(b"\0")[0].decode("latin1").upper())
-WALLCOUNT = sum(1 for w in WALLS if w.upper() in tex1)   # host texlist = walls(in TEXTURE1) then flats
+# WALLCOUNT = the flat-block start in the host's e1m1.crom -- the texid --bakefloor ACTUALLY indexes.
+# MUST come from the CROM the host loads, not a re-derived TEXTURE1 count: those drifted (TEXTURE1-only
+# 103 vs the CROM's real 245-wall layout) -> every flat slot baked the wrong texture (the flats-
+# garbage bug, confirmed on MAME). The appended flats are the one long contiguous 64x64 run.
+def _crom_wallcount(path):
+    b = open(path, "rb").read(); q = 768; nt = struct.unpack_from("<I", b, q)[0]; q += 4
+    dm = [struct.unpack_from("<hhI", b, q + i * 8)[:2] for i in range(nt)]
+    best = (0, 0); i = 0
+    while i < nt:
+        if dm[i] == (64, 64):
+            j = i
+            while j < nt and dm[j] == (64, 64): j += 1
+            if j - i > best[1]: best = (i, j - i)
+            i = j
+        else: i += 1
+    return best   # (start, length)
+_flat_start, _flat_len = _crom_wallcount(os.path.join(ROOT, "e1m1.crom"))
+if _flat_len != len(ordered):
+    raise SystemExit("vsflatlut: e1m1.crom flat-block is %d flats but e1_flat_order gives %d -- "
+                     "DOOMNG_EPISODES mismatch between wad2c (e1m1.crom) and vsflatlut. "
+                     "Rebuild e1m1.crom with the SAME episode set (this is the flats-garbage bug)."
+                     % (_flat_len, len(ordered)))
+WALLCOUNT = _flat_start
 
 # --- per-flat tier (views=NA, phases=NPH); default 8/4. (fold column ignored: all 90deg now.) ---
 DEFAULT = (8, 4)

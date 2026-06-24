@@ -8,8 +8,7 @@ The CPU does visibility; the sprite hardware does the pixels. No per-pixel softw
 rasterisation on the CPU at all.
 
 The live renderer is called **VSLICE** (a BSP walk that emits the scene as vertical hardware
-sprite strips). Build it with `make rom-vs`. An older on-rails / pre-rendered-frame engine
-("FF") shares some of the codebase and is being retired.
+sprite strips). Build it with `make rom-vs`.
 
 ---
 
@@ -35,15 +34,20 @@ and is git-ignored. You must bring your own WAD.
 | Need | What for | Where |
 |------|----------|-------|
 | **ngdevkit** | Neo Geo toolchain: `m68k-neogeo-elf-gcc`, the Z80 sound tools, `tiletool.py` etc., the open BIOS, and the `ngdevkit-gngeo` emulator | https://github.com/dciabrin/ngdevkit |
-| **Python 3.8+** with **Pillow + numpy** | the asset pipeline (`tools/*.py`); `pip install -r requirements.txt` (or `apt install python3-pil python3-numpy`) | your OS / pip |
+| **Python 3.11+** with **Pillow + numpy** | the asset pipeline (`tools/*.py`) + ngdevkit's `tiletool.py` (needs 3.11's `typing.Self`); `pip install -r requirements.txt` (or `apt install python3-pil python3-numpy`) | your OS / pip |
 | **C compiler + make + SDL2** | builds `doomng-host`, the offline renderer/baker the pipeline drives | your OS (`gcc`/`clang`, `libsdl2-dev` / `sdl2`) |
-| **ImageMagick** (`magick` or `convert`) | bakes the logo tile during the cart build | `imagemagick` (apt) / `brew install imagemagick` |
-| **zip / unzip** | repacks the gngeo run datafile (`tools/patch_gngeo_datafile.sh`) | your OS pkg mgr (preinstalled on macOS) |
+| **ImageMagick** (`magick` or `convert`) | generates the attract-mode logo tile during the cart build (and `make dump`) | your OS (`imagemagick`) |
+| **`zip` / `unzip`** | repack the gngeo run datafile (`make -C neogeo run`) | usually preinstalled |
 | **`doom1.wad`** | the IWAD — you supply it (see above) | shareware / your DOOM install |
 | MAME *(optional)* | cycle-accurate hardware validation (needs a real SNK/UniBIOS — not the gngeo path) | https://mamedev.org |
 
 Install ngdevkit per its README and make sure its `bin/` is on your `PATH` (verify with
 `command -v m68k-neogeo-elf-gcc` and `command -v ngdevkit-gngeo`).
+
+> **Heads-up (macOS especially):** make sure `python3 --version` reports **3.11 or newer** — ngdevkit's
+> `tiletool.py` imports `typing.Self`, so an older default (e.g. Xcode's Python 3.9) fails the cart build
+> with `ImportError: cannot import name 'Self'`. If you have a newer Python from Homebrew, put its `bin`
+> ahead of `/usr/bin` on your `PATH` (or `brew install python`).
 
 ---
 
@@ -100,6 +104,10 @@ idempotent — re-run any time you change a tool or the WAD. Subsequent engine-o
 BIOS bundled with gngeo, so you don't need (and must not commit) any copyrighted SNK/UniBIOS
 files. A real BIOS is only required for the optional MAME path (§4).
 
+> **Audio:** sound effects are extracted from your WAD automatically. The **music** is
+> bring-your-own — the cart ships a *silent* soundtrack loop until you supply MIDIs + a soundfont
+> and run `sh tools/genmusic.sh` (`SF=/path/to.sf2 MIDIDIR=/path/to/midis` to point it at yours).
+
 > **If floors/ceilings/flats render spatially offset or wrapped**, the C-ROM tile-chain
 > offsets are stale — run `python3 tools/fix_tile0.py && make -C neogeo cart`. The LUT
 > bakers hardcode the 257-tile base prefix (logo + fix-font) so a fresh clone gets this
@@ -107,52 +115,65 @@ files. A real BIOS is only required for the optional MAME path (§4).
 
 ### Controls
 
-The cart has a live tuning HUD ("debug shuttle"):
+The cart has a live tuning HUD ("debug shuttle"). Game keys and tuning keys never overlap:
+game keys work only while the HUD is hidden, tuning keys only while it's shown.
 
-- `W`/`S`/`A`/`D` — move forward/back, turn left/right
-- `SPACE` — show/hide the debug HUD (game keys are live only when it's hidden)
-- `P` — cycle which parameter is selected (`>` caret marks it)
-- `B` / `N` — increase / decrease the selected parameter
-- `C` — fire, `D` — use (open doors / lifts / exit switches)
+(Keys below are the default gngeo keyboard mapping from `make -C neogeo run`.)
+
+**Playing (HUD hidden):**
+
+- `W`/`S` — move forward / back  ·  `A`/`D` — turn left / right
+- `N` — fire  ·  `M` — use (open doors / lifts / exit switches)
+- `P` — cycle first-person weapon
+- `SPACE` — show the debug HUD
+
+**Tuning (HUD shown, `SPACE` toggles it):**
+
+- `W`/`A`/`S`/`D` — move the `>` caret around the parameter grid
+- `N` / `M` — decrease / increase the selected dial
+- `P` — toggle the BSP-walk visualiser (watch the live front-to-back sweep)
+- `SPACE` — hide the HUD (back to playing)
 
 ### Debug parameters (the dials)
 
-| # | Tag | What |
-|---|-----|------|
-| 0 | `dd` | draw distance (450…1000 in 50s, then 1500…5000 in 500s) |
-| 1 | `dc` | per-column see-through depth cap (layers) |
-| 2 | `col` | column resolution (20/32/40/64/80) — fewer = faster |
-| 3 | `cap` | wall-edge bevel mode (smooths the 16px staircase silhouette) |
-| 4 | `zon` | zonal flats (per-row visplane) on/off |
-| 5 | `gen` | generic mode: synthetic floor/ceiling LUT vs real flats |
-| 6 | `ease` | far-cull easing gain (smooths the horizon under load) |
-| 7 | `wpn` | first-person weapon select |
-| 8 | `mn` | far-cull floor — how far in the horizon may pull (0…5000) |
-| 9 | `mbg` | far-field backdrop colour ("the colour of nothing") |
-| 10 | `fog` | wall fog-band extent % (5…75 + OFF; low = heavy near fog) |
-| 11/16 | `flod`/`clod` | floor / ceiling LOD crop (drop far rows) |
-| 12 | `occl` | actor-vs-wall occlusion |
-| 13 | `bud` | strip budget — the hard per-frame framerate cap |
-| 14 | `sky` | draw sky through window/door openings |
-| 15 | `seam` | seam overdraw (flicker mask) |
-| 17 | `prop` | show/hide actors (barrels/baddies) |
-| 18/19 | `fmrk`/`cmrk` | floor / ceiling murk rows (3-band distance gradient) |
-| 20/21 | `hgun`/`hhud` | hide weapon / hide status bar |
-| 22 | `dwlk` | walk through doors without opening |
-| 23 | `rad` | radial far-cull v2 (uniform-radius reach; column-closing) |
-| 24 | `vmap` | vertical texture map (1:1 + DOOM pegging) vs original stretch |
-| 25 | `lvl` | level select (E1M1…E1M9) |
-| 26 | `pf` | perf preset: `lo` / `md` / `hi` / `ul` (applies a dial set) |
-| 27 | `rset` | reset all dials to defaults |
+The HUD exposes ~50 tuning dials on a navigable grid. The ones you'll actually reach for are
+below, with their shipped defaults; the **full reference is in
+[`neogeo/DEBUG_PARAMS.md`](neogeo/DEBUG_PARAMS.md)** and live on the in-cart HUD. Reset all
+dials to these defaults with `cf` → `rset`.
+
+| Tag | What | Default |
+|-----|------|---------|
+| `dd` | draw distance, world units (0 = fog-only … 32000 ≈ whole map) | 750 |
+| `dc` | per-column see-through depth cap (layers) | 5 |
+| `col` | column resolution (20/32/40/64/80) — fewer = faster | 32 |
+| `gen` | synthetic blanket floor/ceiling (1) vs real per-flat LUT (0) | 1 |
+| `ease` | far-horizon trim 0…16 — pulls the draw horizon inward | 16 |
+| `wpn` | first-person weapon select | — |
+| `mn` | far-cull floor — how far in the horizon may pull | 150 |
+| `mbg` | far-field backdrop colour ("the colour of nothing") | 1 |
+| `fog` | wall fog-band extent % (5…75 + OFF; low = heavy near fog) | 35 |
+| `flod` / `clod` | floor / ceiling LOD crop (drop far rows) | 0 / 1 |
+| `bud` | strip budget — the hard per-frame framerate cap | 300 |
+| `cmap` | colmap floor+ceiling depth-fade dim (1) vs full-bright (0) | 1 |
+| `prop` | show / hide actors (baddies + barrels) | 1 |
+| `hmap` / `vmap` | per-axis perspective texture mapping, 0…3 | 2 / 2 |
+| `lvl` | level select (E1M1…E1M9) | — |
+| `cf` | perf-preset config select / reset (`rset`) | — |
+| `ncul` | node far-cull — prune BSP subtrees past the horizon | 1 |
+| `nclp` | near-clip plane | 16 |
+| `bxc` | BSP walk budget — cap node-box tests (bounds worst case) | 100 |
+| `gov` | graceful governor: target fps; recedes the horizon under load | 5 |
 
 ### Tuning perf (short version)
 
 Frame cost is bounded by what's *visible*, not by the dials, so sparse views are fast even
-maxed. To hold frame in dense/open vistas: set `bud` (13) to your worst-case budget (it's the
-hard backstop), keep `col` (2) at **20**, keep `dd` (0) modest and let the murk gradient +
-backdrop carry distance, turn on `mn` (8) easing to pull the horizon in under load, keep `dc`
-(1) low, and use `flod`/`clod` to crop far floor/ceiling rows. `pf` (26) applies all of this
-as `lo`/`md`/`hi`/`ul` presets; `rset` (27) restores defaults.
+maxed. To hold frame in dense/open vistas: `bud` is the hard backstop — set it to your
+worst-case budget; drop `col` toward **20**; keep `dd` modest and let the murk gradient +
+backdrop carry distance; turn `ease`/`mn` up to pull the horizon in; keep `dc` low; use
+`flod`/`clod` to crop far floor/ceiling rows; and dial `bxc` down on node-dense maps to cap
+the BSP walk. `gov` automates the trade — pick a target fps and it recedes the horizon under
+load and extends it with headroom. `cf` applies whole preset sets; `cf` → `rset` restores the
+shipped defaults above.
 
 ---
 
@@ -189,9 +210,10 @@ tools/*.py                asset pipeline: wad2c, vs_extract, vsfloorlut, vsceill
 
 **Generated from your WAD at build time (git-ignored, never commit):** `src/map.c`,
 `neogeo/textiles.h`, `texpal.h`, `ramps.h`, `ceillut.h`, `floorlut.h`, `sprites.h`,
-`hudfix.h`, `titlepic.h`, `menu.h`, `vs_e1.h`, `vsfloor.*`, `vsceil.*`, `vsflat.*`,
-`nodes*.{h,c,bin}`, `*.c1`/`*.c2` C-ROM tiles, `snd_*.wav`/`*.adpcma`, `path_nodes.txt`,
-`ramps_used.txt`, `neogeo/build/`, `dist/`.
+`hudfix.h`, `gunhand.h`, `titlepic.h`, `interpic.h`, `menu.h`, `vs_e1.h`, `vs_geo.bin`
+(banked BSP geometry), `vsfloor.*`, `vsceil.*`, `vsflat.*`, `*.c1`/`*.c2` C-ROM tiles,
+`snd_*.wav`/`*.adpcma` (SFX), `*.adpcmb` (music), `path_nodes.txt`, `ramps_used.txt`,
+`neogeo/build/`, `dist/`.
 
 ---
 

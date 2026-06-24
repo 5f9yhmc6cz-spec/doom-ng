@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Ground-truth reference capture: headless ViZDoom (real ZDoom + the real WAD) renders
 # E1M1 at exact (x,y,angle). Sets the camera by PATCHING the player-1 start in a WAD copy
-# (ViZDoom's turn-action was a no-op), so the player spawns exactly where/how we want.
+# (ViZDoom's turn-action was a no-op), so the player spawns exactly at the desired position/angle.
 # Modes:
 #   refcap.py <wad> <MAP> <x> <y> <angles_csv_deg> <out_prefix>   # sweep at one spot
 #   refcap.py <wad> <MAP> --list <nodefile> <outdir>             # one frame per path node

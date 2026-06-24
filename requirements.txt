@@ -1,26 +1,21 @@
-# DOOM-NG asset pipeline (tools/*.py) Python dependencies.
+# DOOM-NG asset pipeline (tools/*.py) -- Python package dependencies.
 #
 #   pip install -r requirements.txt
-#   (or, on Debian/Ubuntu, prefer the system packages: python3-numpy python3-pil)
 #
-# Pillow  -- texture/sprite/LUT image handling (tools/wad2c.py and the *lut.py bakers).
-# numpy   -- used by wad2c.py's --ramps pass (the diagonal-alpha edge-tile bake).
+# These are the pip packages the asset bakers import. Everything ELSE the build
+# needs is SYSTEM-level (install with your OS package manager -- see README.md):
 #
-# Historical note: these used to be assumed "globally present" on the original
-# dev machine, so this file once claimed the pipeline was stdlib-only. It is not --
-# a fresh machine needs both, or `make rom-vs` dies at the --ramps step.
-Pillow>=9
-numpy>=1.21
+#   - ngdevkit      Neo Geo toolchain (m68k-neogeo-elf-gcc, Z80 tools, tiletool.py,
+#                   open BIOS, ngdevkit-gngeo)   https://github.com/dciabrin/ngdevkit
+#   - a C compiler (gcc/clang) + make            -- builds the host baker (doomng-host)
+#   - SDL2 (libsdl2-dev / sdl2)                  -- doomng-host window
+#   - Python 3.11+   (the bakers AND ngdevkit's tiletool.py need it -- tiletool imports typing.Self)
+#   - doom1.wad  (DOOM shareware -- bring your own; not redistributed here)
+#   - ImageMagick (optional, the `magick` command -- for `make dump`)
+#   - zip / unzip                                -- gngeo datafile packaging (`make -C neogeo run`)
+#   - MAME (optional)                            -- cycle-accurate hardware validation
 
-# Everything else the build needs is system-level, installed with your OS package
-# manager (NOT pip) -- see README.md:
-#
-#   - a C compiler (gcc / clang) and GNU make 4+
-#   - SDL2            (libsdl2-dev / sdl2)        -- host window
-#   - ImageMagick     (the `magick` command)      -- logo tile + `make dump`
-#   - zip / unzip                                  -- gngeo datafile packaging
-#   - Python 3.8+                                  -- tools/*.py
-#   - doom1.wad       (Doom shareware, bring your own)
-#
-# For the Neo Geo cartridge build you additionally need ngdevkit:
-#   https://github.com/dciabrin/ngdevkit
+Pillow>=9        # tile/sprite quantisation + image I/O in the bakers (wad2c, *lut, gunbake, ...)
+numpy            # buffer maths in wad2c and the dev profiling tools
+
+# vizdoom        # OPTIONAL -- only tools/refcap.py (the reference frame-match dev harness)
