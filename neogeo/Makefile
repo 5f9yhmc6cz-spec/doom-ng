@@ -240,8 +240,14 @@ $(VROM1): e1m1.adpcmb e1m2.adpcmb e1m3.adpcmb e1m4.adpcmb e1m5.adpcmb e1m6.adpcm
 e1m%.adpcmb:
 	@w=$(@:.adpcmb=.wav); if [ -f $$w ]; then echo "converting $$w -> $@"; adpcmtool.py -b -e $$w -o $@ || /opt/homebrew/bin/adpcmtool.py -b -e $$w -o $@; else echo "NOTE: no $@ -- run 'sh tools/genmusic.sh' for real music; building SILENT"; python3 -c "open('$@','wb').write(bytes(524288))"; fi
 # E2/E3 tracks come from the Ultimate MIDI Pack: `sh tools/genmusic_ultimidi.sh` (ultimidi.zip + soundfont).
-e2m%.adpcmb e3m%.adpcmb:
-	@echo "NOTE: $@ missing -- run 'sh tools/genmusic_ultimidi.sh' for real E2/E3 music; building SILENT"; python3 -c "open('$@','wb').write(bytes(524288))"
+# TWO SEPARATE pattern rules on purpose: a single `e2m%.adpcmb e3m%.adpcmb:` is a MULTI-TARGET pattern rule,
+# so GNU make believes one recipe run produces BOTH stems -> it marks e3m<stem> built without ever writing it
+# -> the V-ROM cat fails on a clean checkout. Each stem now gets its own recipe run. (Mirror the e1m% .wav->
+# adpcm path so a real Ultimate-MIDI-Pack bake is picked up too; otherwise a silent 512KB placeholder.)
+e2m%.adpcmb:
+	@w=$(@:.adpcmb=.wav); if [ -f $$w ]; then echo "converting $$w -> $@"; adpcmtool.py -b -e $$w -o $@ || /opt/homebrew/bin/adpcmtool.py -b -e $$w -o $@; else echo "NOTE: no $@ -- run 'sh tools/genmusic_ultimidi.sh' for real E2/E3 music; building SILENT"; python3 -c "open('$@','wb').write(bytes(524288))"; fi
+e3m%.adpcmb:
+	@w=$(@:.adpcmb=.wav); if [ -f $$w ]; then echo "converting $$w -> $@"; adpcmtool.py -b -e $$w -o $@ || /opt/homebrew/bin/adpcmtool.py -b -e $$w -o $@; else echo "NOTE: no $@ -- run 'sh tools/genmusic_ultimidi.sh' for real E2/E3 music; building SILENT"; python3 -c "open('$@','wb').write(bytes(524288))"; fi
 # Note: build rules (%.wav-> %.adpcm<a,b>) are defined in Makefile.build
 
 

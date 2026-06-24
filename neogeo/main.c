@@ -278,7 +278,6 @@ static const short VS_SIN[256]={
 #define VS_SN(a) VS_SIN[(a)&255]
 #define VS_CS(a) VS_SIN[((a)+64)&255]
 #include "vs_e1.h"               /* ALL of Episode 1: per-map BSP geometry as A1 pointer tables (VE*_MAP[VE_NMAP]) */
-#include "vs_reject.h"           /* REJECT-spike (E1M1 only, gitignored): sector-visibility matrix for the walk-prune measurement */
 /* MAP TOGGLE: file-scope geometry pointers, reseated per map by vs_set_map(). The hot path (vs_render_seg /
    vs_floor_at / vs_move_ok) reads through these -> one indirection, same cost as the old fixed arrays; the
    per-map array-of-arrays index is paid ONCE per toggle, never per seg. */
@@ -563,7 +562,6 @@ static int g_nclip=1;   /* (36) NEAR-CLIP dial: idx into NCLIP[]; the author def
 static const short NCLIP[NNCLIP]={0,8,16,24,32,40,48,56,64,80,96,112,128,144,160,176,192,200};
 static int g_vs_near=VS_NEAR;   /* live near-clip = NCLIP[g_nclip]; replaces VS_NEAR for the WALLS + the BSP-walk bbox. Actors/shoot keep the fixed VS_NEAR so aim/gameplay is stable. */
 static int g_dbg_ffl=-1, g_dbg_bfl=-1;   /* FLAT-DBG readout (fdbg on): centre column's nearest-seg FRONT + BACK floor flat -> see if a main-floor cell wrongly latches the pit's flat from the seg's front side */
-static int g_cam_sec=0, g_rej_n=0, g_rej_t=0;   /* REJECT-spike: camera sector + per-frame (rejected / total) walked leaves -> the rj=R/T HUD readout (E1M1) */
 static int g_cam_ffl=0xFF;   /* camera's current-sector FLOOR flat, recomputed once/frame -> the DEFAULT near-floor flat (fixes the nearest-seg-is-a-far-wall mis-latch; keyed on a frame constant so the majority of columns stay byte-identical) */
 static int g_cam_cfl=0xFF;   /* camera's current-sector CEIL flat, recomputed once/frame in the SAME BSP descent -> the DEFAULT top-band ceil flat (symmetric twin of g_cam_ffl; fixes the near far-wall ceiling mis-latch the floor already got, no extra descent) */
 static int g_floor_rows=5, g_ceil_rows=7;             /* LUT rows drawn (full-res band: floor 5, ceil 7), from g_lod_floor/ceil (0 => parked) */
@@ -1451,12 +1449,12 @@ static void vs_render(int px,int py,int ang,int emit){
     vs_px=px; vs_py=py; vs_fcs=VS_CS(ang); vs_fsn=VS_SN(ang); vs_emit=emit; g_vcx=0x40000000;   /* invalidate the per-vertex projection cache each frame (it's camera-dependent) */
     g_frP=vs_fsn-vs_fcs; g_frQ=-(vs_fcs+vs_fsn); g_frR=vs_fsn+vs_fcs;   /* Phase 1: per-frame frustum side-reject coeffs (cheap bbox off-screen cull in vs_bbox_vis) */
     if(emit){ int tgt=vs_floor_at(px,py)+41; g_flooreye=tgt; vs_eye += (tgt-vs_eye)>>2;
-              unsigned short cn=ve_root; while(!(cn&0x8000)){ long ccr=(long)((short)(px-ve_nx[cn])*(short)ve_ndy[cn])-(long)((short)(py-ve_ny[cn])*(short)ve_ndx[cn]); cn=(ccr>0)?ve_nr[cn]:ve_nl[cn]; } { int csec=ve_ssf[cn&0x7FFF]; g_cam_ffl=ve_ffl[csec]; g_cam_cfl=ve_cfl[csec]; g_cam_sec=ve_fsec[csec]; } }   /* CAMERA-SECTOR floor+ceil flat (+ g_cam_sec = the sector id for the REJECT spike) (same single BSP descent as vs_floor_at; ceil is FREE here -> no second descent) -> the default near-floor / top-band-ceil flats for the stamp */
+              unsigned short cn=ve_root; while(!(cn&0x8000)){ long ccr=(long)((short)(px-ve_nx[cn])*(short)ve_ndy[cn])-(long)((short)(py-ve_ny[cn])*(short)ve_ndx[cn]); cn=(ccr>0)?ve_nr[cn]:ve_nl[cn]; } { int csec=ve_ssf[cn&0x7FFF]; g_cam_ffl=ve_ffl[csec]; g_cam_cfl=ve_cfl[csec]; } }   /* CAMERA-SECTOR floor+ceil flat (same single BSP descent as vs_floor_at; ceil is FREE here -> no second descent) -> the default near-floor / top-band-ceil flats for the stamp */
     { g_vpl=0; g_vpr=g_ncol-1; g_vpt=VS_LBT; g_vpb=VS_LBB; }   /* viewport crop NEUTRALISED (ditched) -> always full; g_vpw/g_vph are now FLOOR/CEILING murk (used in vs_lut) */
     for(int c=0;c<g_ncol;c++){ vs_ct[c]=(c>=g_vpl&&c<=g_vpr)?g_vpt:(g_vpb+1); vs_cb[c]=g_vpb; vs_nstr[c]=0; vs_clY[c]=VS_LBB+1; vs_flY[c]=VS_LBT-1; vs_ctop[c]=VS_LBB+1; vs_cbot[c]=VS_LBT-1; vs_sky[c]=0; vs_skd[c]=0; vs_ffl[c]=0xFF; vs_cfl[c]=0xFF; vs_wdep[c]=0x7FFF; vs_stepd[c]=0x7FFF; }   /* zonal depth reset (vs_fdep + vs_cdep) moved to the 20-wide block loop below (both block-indexed now). ct/cb seed the VIEWPORT band ([g_vpt,g_vpb]); columns outside [g_vpl,g_vpr] start CLOSED (ct>cb) -> walls + BSP skip them = H letterbox */
     if(g_zonal&&!g_generic) for(int bk=0;bk<FLOORLUT_COLS;bk++){ for(int r=0;r<7;r++)vs_cdep[bk][r]=0x7FFF; for(int r=0;r<5;r++){vs_fdep[bk][r]=-1; vs_fbndy[bk][r]=-1;} }   /* zonal depth reset: ceiling(7)+floor(5), BLOCK-indexed 20-wide; vs_fbndy(5) = the zon>=6 sub-tile edge */
     for(int k=0;k<FLOORLUT_COLS;k++)vs_skyblk[k]=0;   /* SKY-IN-OPENING: clear the per-block dedup */
-    vs_spr=41; vs_open=g_ncol; g_bbox_n=0; g_seg_n=0; g_seg_clipped=0; g_rej_n=0; g_rej_t=0;
+    vs_spr=41; vs_open=g_ncol; g_bbox_n=0; g_seg_n=0; g_seg_clipped=0;
     if(emit){ if(!g_hidehud) vs_hud_edges();   /* full-width HUD edge sprites at slots 41,42 -- BEFORE the wall budget so they're guaranteed */
               else { vs_park(41); vs_park(42); } }   /* cln ON: edges not re-emitted; explicitly PARK both slots (the wall burst only clobbers them when es>=2, so es<2 frames froze a sidebar). Walls/sky reuse 41,42 normally after (vs_spr still 41). */
     if(g_radial){   /* RADIAL far-cull (param 23): only pay the per-column threshold work when it's actually ON */
@@ -1473,7 +1471,6 @@ static void vs_render(int px,int py,int ang,int emit){
     while(sp>0 && vs_open>0 && g_bbox_n<bxcap){     /* ...halt when bx hits the cap: the FAR subtrees still on the stack drop (depth-ordered) */
         unsigned short n=vs_stk[--sp];
         if(n&0x8000){ int ss=n&0x7FFF, cnt=ve_ssc[ss], first=ve_ssf[ss];   /* subsector leaf: render its segs */
-            if(g_map==0){ int ls=ve_fsec[first]; if(ls<REJ_NSEC && g_cam_sec<REJ_NSEC){ long bi=(long)g_cam_sec*REJ_NSEC+ls; g_rej_t++; if((REJ_BITS[bi>>3]>>(bi&7))&1) g_rej_n++; } }   /* REJECT spike: count walked leaves the cam sector can't see (would be prunable) */
             for(int i=0;i<cnt;i++) vs_render_seg(first+i); continue; }
         long cross=(long)((short)(px-ve_nx[n])*(short)ve_ndy[n]) - (long)((short)(py-ve_ny[n])*(short)ve_ndx[n]);  /* which side? FastDoom #1: (long) cast OUTSIDE the product -> 16x16 muls.w, not a __mulsi3 32-bit lib call per node */
         unsigned short nearc,farc; const short *nearbb,*farbb;
@@ -2105,7 +2102,7 @@ int main(void){
               int deg=(ang*360)>>8;
               g_vrambusy=1;
               worst=1; for(int i=0;i<FCN;i++) if(g_fcost[i]>worst) worst=g_fcost[i];   /* SCOPE: 'worst' = RECENT peak over the 32-frame ring (was an all-time max that never recovered after one heavy view) */
-              { int lp=snprintf(ln,sizeof ln,"rc=%d f=%d ns=%d sg=%d bx=%d ef=%d rj=%d/%d",g_rcost,cad?60/cad:60,vs_spr-41,g_seg_n,g_bbox_n,g_murk_eff,g_rej_n,g_rej_t);   /* REJECT spike: rj = (leaves the cam can't see) / (total walked leaves) -> the walk-prune ceiling */
+              { int lp=snprintf(ln,sizeof ln,"rc=%d f=%d w=%d ns=%d sg=%d bx=%d ef=%d",g_rcost,cad?60/cad:60,worst?60/worst:60,vs_spr-41,g_seg_n,g_bbox_n,g_murk_eff);
                 while(lp<38 && lp<(int)sizeof(ln)-1) ln[lp++]=' '; ln[lp]=0; ng_text(2,2,1,ln); }   /* perf: fps+worst+strips ns+sg=SEGS PROJECTED+bx=NODE-BBOX WALK+ef=LIVE eased far-horizon g_murk_eff. PADDED to 38 to clear stale chars (the shorter line was leaving a trailing 'ef100[350]' overlay). (dropped t=tiles for room.) */
               for(int row=0;row<((NDISP+3)/4);row++){ int p=0;       /* NDISP params, 4 per row -> ceil(NDISP/4) rows (rows 3..); caret marks g_sel */
                 for(int col=0;col<4;col++){ int dpos=row*4+col; if(dpos>=NDISP)break; int idx=DSEL[dpos];   /* DSEL = display order (rset dropped; hclp sits before the pf preset on the last row) */

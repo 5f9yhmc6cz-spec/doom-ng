@@ -8,8 +8,7 @@ The CPU does visibility; the sprite hardware does the pixels. No per-pixel softw
 rasterisation on the CPU at all.
 
 The live renderer is called **VSLICE** (a BSP walk that emits the scene as vertical hardware
-sprite strips). Build it with `make rom-vs`. An older on-rails / pre-rendered-frame engine
-("FF") shares some of the codebase and is being retired.
+sprite strips). Build it with `make rom-vs`.
 
 ---
 
@@ -83,58 +82,65 @@ idempotent — re-run any time you change a tool or the WAD. Subsequent engine-o
 
 ### Controls
 
-The cart has a live tuning HUD ("debug shuttle"):
+The cart has a live tuning HUD ("debug shuttle"). Game keys and tuning keys never overlap:
+game keys work only while the HUD is hidden, tuning keys only while it's shown.
 
 (Keys below are the default gngeo keyboard mapping from `make -C neogeo run`.)
 
-- `W`/`A`/`S`/`D` — move forward/back, turn left/right
-- `SPACE` — show/hide the debug HUD (game keys are live only when it's hidden)
+**Playing (HUD hidden):**
+
+- `W`/`S` — move forward / back  ·  `A`/`D` — turn left / right
 - `N` — fire  ·  `M` — use (open doors / lifts / exit switches)
-- **with the HUD up:** `W`/`A`/`S`/`D` move the `>` caret around the parameter grid, `N` / `M` decrease / increase the selected dial, `P` cycles the selection
+- `P` — cycle first-person weapon
+- `SPACE` — show the debug HUD
+
+**Tuning (HUD shown, `SPACE` toggles it):**
+
+- `W`/`A`/`S`/`D` — move the `>` caret around the parameter grid
+- `N` / `M` — decrease / increase the selected dial
+- `P` — toggle the BSP-walk visualiser (watch the live front-to-back sweep)
+- `SPACE` — hide the HUD (back to playing)
 
 ### Debug parameters (the dials)
 
-| # | Tag | What |
-|---|-----|------|
-| 0 | `dd` | draw distance (50…1000 in 50s, 1500…5000 in 500s, then 6k/8k/12k/16k/32k ≈ whole-map) |
-| 1 | `dc` | per-column see-through depth cap (layers) |
-| 2 | `col` | column resolution (20/32/40/64/80) — fewer = faster |
-| 3 | `cap` | wall-edge bevel mode (smooths the 16px staircase silhouette) |
-| 4 | `zon` | zonal flats (per-row visplane): 0 off / 1 on / 2 bias grey-into-pit / 3 bias pit-into-grey |
-| 5 | `gen` | generic mode: synthetic floor/ceiling LUT vs real flats |
-| 6 | `ease` | far-cull easing gain (smooths the horizon under load) |
-| 7 | `wpn` | first-person weapon select |
-| 8 | `mn` | far-cull floor — how far in the horizon may pull (0…5000) |
-| 9 | `mbg` | far-field backdrop colour ("the colour of nothing") |
-| 10 | `fog` | wall fog-band extent % (5…75 + OFF; low = heavy near fog) |
-| 11/16 | `flod`/`clod` | floor / ceiling LOD crop (drop far rows) |
-| 12 | `occl` | actor-vs-wall occlusion |
-| 13 | `bud` | strip budget — the hard per-frame framerate cap |
-| 14 | `sky` | draw sky through window/door openings |
-| 15 | `seam` | seam overdraw (flicker mask) |
-| 17 | `prop` | show/hide actors (barrels/baddies) |
-| 18/19 | `fmrk`/`cmrk` | floor / ceiling murk rows (3-band distance gradient) |
-| 20/21 | `hgun`/`hhud` | hide weapon / hide status bar |
-| 22 | `dwlk` | walk through doors without opening |
-| 23 | `rad` | radial far-cull v2 (uniform-radius reach; column-closing) |
-| 24 | `vmap` | vertical texture map (1:1 + DOOM pegging) vs original stretch |
-| 25 | `lvl` | level select (E1M1…E1M9) |
-| 26 | `pf` | perf preset: `lo` / `md` / `hi` / `ul` (applies a dial set) |
-| 27 | `rset` | reset all dials to defaults |
-| 28 | `hclp` | height-clip flats to the nearest wall (legacy band-aid; default off) |
-| 29 | `lcul` | LUT-cull blocks fully covered by a nearer wall |
-| 30 | `hwt` | per-SCB high-water tail-clear (kills shrunk-strip trails) |
-| 31 | `untx` | untextured checker (debug: see strip extents) |
-| 32 | `fdbg` | flat-source debug view (solid colour per flat ID) |
+The HUD exposes ~50 tuning dials on a navigable grid. The ones you'll actually reach for are
+below, with their shipped defaults; the **full reference is in
+[`neogeo/DEBUG_PARAMS.md`](neogeo/DEBUG_PARAMS.md)** and live on the in-cart HUD. Reset all
+dials to these defaults with `cf` → `rset`.
+
+| Tag | What | Default |
+|-----|------|---------|
+| `dd` | draw distance, world units (0 = fog-only … 32000 ≈ whole map) | 750 |
+| `dc` | per-column see-through depth cap (layers) | 5 |
+| `col` | column resolution (20/32/40/64/80) — fewer = faster | 32 |
+| `gen` | synthetic blanket floor/ceiling (1) vs real per-flat LUT (0) | 1 |
+| `ease` | far-horizon trim 0…16 — pulls the draw horizon inward | 16 |
+| `wpn` | first-person weapon select | — |
+| `mn` | far-cull floor — how far in the horizon may pull | 150 |
+| `mbg` | far-field backdrop colour ("the colour of nothing") | 1 |
+| `fog` | wall fog-band extent % (5…75 + OFF; low = heavy near fog) | 35 |
+| `flod` / `clod` | floor / ceiling LOD crop (drop far rows) | 0 / 1 |
+| `bud` | strip budget — the hard per-frame framerate cap | 300 |
+| `cmap` | colmap floor+ceiling depth-fade dim (1) vs full-bright (0) | 1 |
+| `prop` | show / hide actors (baddies + barrels) | 1 |
+| `hmap` / `vmap` | per-axis perspective texture mapping, 0…3 | 2 / 2 |
+| `lvl` | level select (E1M1…E1M9) | — |
+| `cf` | perf-preset config select / reset (`rset`) | — |
+| `ncul` | node far-cull — prune BSP subtrees past the horizon | 1 |
+| `nclp` | near-clip plane | 16 |
+| `bxc` | BSP walk budget — cap node-box tests (bounds worst case) | 100 |
+| `gov` | graceful governor: target fps; recedes the horizon under load | 5 |
 
 ### Tuning perf (short version)
 
 Frame cost is bounded by what's *visible*, not by the dials, so sparse views are fast even
-maxed. To hold frame in dense/open vistas: set `bud` (13) to your worst-case budget (it's the
-hard backstop), keep `col` (2) at **20**, keep `dd` (0) modest and let the murk gradient +
-backdrop carry distance, turn on `mn` (8) easing to pull the horizon in under load, keep `dc`
-(1) low, and use `flod`/`clod` to crop far floor/ceiling rows. `pf` (26) applies all of this
-as `lo`/`md`/`hi`/`ul` presets; `rset` (27) restores defaults.
+maxed. To hold frame in dense/open vistas: `bud` is the hard backstop — set it to your
+worst-case budget; drop `col` toward **20**; keep `dd` modest and let the murk gradient +
+backdrop carry distance; turn `ease`/`mn` up to pull the horizon in; keep `dc` low; use
+`flod`/`clod` to crop far floor/ceiling rows; and dial `bxc` down on node-dense maps to cap
+the BSP walk. `gov` automates the trade — pick a target fps and it recedes the horizon under
+load and extends it with headroom. `cf` applies whole preset sets; `cf` → `rset` restores the
+shipped defaults above.
 
 ---
 
@@ -171,9 +177,10 @@ tools/*.py                asset pipeline: wad2c, vs_extract, vsfloorlut, vsceill
 
 **Generated from your WAD at build time (git-ignored, never commit):** `src/map.c`,
 `neogeo/textiles.h`, `texpal.h`, `ramps.h`, `ceillut.h`, `floorlut.h`, `sprites.h`,
-`hudfix.h`, `titlepic.h`, `menu.h`, `vs_e1.h`, `vsfloor.*`, `vsceil.*`, `vsflat.*`,
-`nodes*.{h,c,bin}`, `*.c1`/`*.c2` C-ROM tiles, `snd_*.wav`/`*.adpcma`, `path_nodes.txt`,
-`ramps_used.txt`, `neogeo/build/`, `dist/`.
+`hudfix.h`, `gunhand.h`, `titlepic.h`, `interpic.h`, `menu.h`, `vs_e1.h`, `vs_geo.bin`
+(banked BSP geometry), `vsfloor.*`, `vsceil.*`, `vsflat.*`, `*.c1`/`*.c2` C-ROM tiles,
+`snd_*.wav`/`*.adpcma` (SFX), `*.adpcmb` (music), `path_nodes.txt`, `ramps_used.txt`,
+`neogeo/build/`, `dist/`.
 
 ---
 
