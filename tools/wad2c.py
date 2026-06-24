@@ -89,7 +89,17 @@ pn = glump("PNAMES"); npn = struct.unpack_from("<I", pn, 0)[0]
 pnames = [nm(pn[4 + i * 8: 12 + i * 8]) for i in range(npn)]
 t1 = glump("TEXTURE1"); ntx = struct.unpack_from("<I", t1, 0)[0]
 toffs = struct.unpack_from("<%di" % ntx, t1, 4)
-tex1_off = {nm(t1[toffs[i]: toffs[i] + 8]): toffs[i] for i in range(ntx)}
+tex1_off = {nm(t1[toffs[i]: toffs[i] + 8]): (t1, toffs[i]) for i in range(ntx)}   # name -> (lump, offset)
+# TEXTURE2 (registered/Ultimate DOOM: E2-E4's marble/skin/wood/gstone textures live HERE). Without it
+# every TEXTURE2 wall is dropped from the bake AND every texid past the first one shifts vs vs_extract's
+# full 245-wall enumerate -> mangled texture palettes even on E1M1. TEXTURE1 wins on dup names (DOOM rule).
+try:
+    t2 = glump("TEXTURE2"); ntx2 = struct.unpack_from("<I", t2, 0)[0]
+    toffs2 = struct.unpack_from("<%di" % ntx2, t2, 4)
+    for i in range(ntx2):
+        tex1_off.setdefault(nm(t2[toffs2[i]: toffs2[i] + 8]), (t2, toffs2[i]))
+except Exception:
+    pass   # shareware doom1.wad has no TEXTURE2 -- E1-only build, unchanged
 
 
 def parse_patch(b):
@@ -111,12 +121,12 @@ def parse_patch(b):
     return w, h, lo, to, grid
 
 
-def build_texture(o):
-    masked, w, h, coldir, pc = struct.unpack_from("<ihhiH", t1, o + 8)
+def build_texture(lump, o):
+    masked, w, h, coldir, pc = struct.unpack_from("<ihhiH", lump, o + 8)
     grid = [[-1] * w for _ in range(h)]
     po = o + 22
     for p in range(pc):
-        ox, oy, pat, sd, cm = struct.unpack_from("<hhhhh", t1, po); po += 10
+        ox, oy, pat, sd, cm = struct.unpack_from("<hhhhh", lump, po); po += 10
         pw, ph, plo, pto, pg = parse_patch(glump(pnames[pat]))
         for cx in range(pw):
             tx = ox + cx
@@ -136,7 +146,7 @@ WALLS_E1, FLATS_E1, _ = e1_assets(WAD)
 texlist = []; texid = {}
 for name in WALLS_E1:
     if name in tex1_off:
-        w, h, grid = build_texture(tex1_off[name])
+        w, h, grid = build_texture(*tex1_off[name])
         texid[name] = len(texlist); texlist.append((w, h, grid, 0))
 
 
@@ -165,7 +175,7 @@ def fid(name):
 # flagged with ceiltex = -2 so the backend scrolls the sky instead of floor-casting.
 SKY_TEX = -1
 if "SKY1" in tex1_off:
-    skw, skh, skg = build_texture(tex1_off["SKY1"])
+    skw, skh, skg = build_texture(*tex1_off["SKY1"])
     SKY_TEX = len(texlist); texlist.append((skw, skh, skg, 0))
 
 sec_out = [(fl, ce, li, fid(ff), -2 if cf == "F_SKY1" else fid(cf))
@@ -777,16 +787,18 @@ if "--ramps" in sys.argv:
     #     image bakes as ONE tiletool pass; the cart applies TITLE_MAP[row][col] palettes at title time and
     #     restores the game palettes after. Appended after the avg-mip -> no downstream base shift. ===
     import numpy as _np
-    TITLE_TILE0 = AVG_TILE0 + abase; TCOLS, TROWS = 20, 14; _tg = None   # TROWS=14 -> 224px: title FILLS the active area (the author); see vertical-stretch resample below
+    TITLE_TILE0 = AVG_TILE0 + abase; TCOLS, TROWS = 20, 14; _tg = None   # TROWS=14 -> 224px active area; the title is baked NATIVE + vertically CENTRED (no stretch) -> letterbox top/bottom (see below)
     try: _tw,_th,_tlo,_tto,_tg = parse_patch(glump("TITLEPIC"))
     except Exception as _e: print("TITLEPIC: not found (%s) -> cart falls back to text title" % _e)
     def _ngc(r,g,b):
         R,G,B=r>>3,g>>3,b>>3; return ((R&1)<<14)|((G&1)<<13)|((B&1)<<12)|((R>>1)<<8)|((G>>1)<<4)|(B>>1)
     if _tg:
         _rgb=_np.zeros((TROWS*16,TCOLS*16,3),dtype=_np.uint8)
-        for _y in range(TROWS*16):                       # vertical STRETCH: resample the ~200px TITLEPIC to fill TROWS*16 (224) px so the logo fills the active area (HW can't magnify at display time). ~1.12x = close to DOOM's 4:3 CRT look.
-            _sy=_y*_th//(TROWS*16)
-            if _sy>=_th: continue
+        _voff=(TROWS*16-_th)//2                          # NATIVE (no vertical stretch), vertically CENTRED -> black letterbox top+bottom (the author 2026-06-23: "uncrop without stretching" -- the ~200px title sits 1:1 in the 224px area with ~12px letterbox each; also drops the palette count well under 248, so no bottom-row merge glitch).
+        if _voff<0: _voff=0
+        for _y in range(TROWS*16):
+            _sy=_y-_voff
+            if _sy<0 or _sy>=_th: continue               # letterbox rows: stay black (index 0)
             for _x in range(min(_tw,TCOLS*16)):
                 _i=_tg[_sy][_x]
                 if _i>=0: _rgb[_y,_x]=PALRGB[_i]
@@ -806,7 +818,7 @@ if "--ramps" in sys.argv:
             for _ty in range(TROWS):
                 for _tx in range(TCOLS): _use[_tmap[_ty][_tx]]+=1
             _ord=sorted(range(len(_pals)), key=lambda p:-_use[p]); _keep=set(_ord[:MAXTPAL])
-            def _pd(a,b): return sum((a[i][0]-b[i][0])**2+(a[i][1]-b[i][1])**2+(a[i][2]-b[i][2])**2 for i in range(15))
+            def _pd(a,b): return sum(min((a[i][0]-b[j][0])**2+(a[i][1]-b[j][1])**2+(a[i][2]-b[j][2])**2 for j in range(15)) for i in range(15))   # SET-based (order-insensitive): score by each colour's NEAREST in b, not slot-by-slot -> the id-logo tile merges into a colour-COMPATIBLE palette (fixes the green-square: slot-aligned scoring picked a palette that couldn't represent the logo's colours)
             def _cm(c,pal):
                 _bi,_bd=0,1<<60
                 for _i,_pc in enumerate(pal):
@@ -857,7 +869,7 @@ if "--ramps" in sys.argv:
     #     transparent sprite tilemaps, ONE 15-colour palette per lump (menu art is simple). Drawn over
     #     black after the title (the title's 242 palettes leave no room to overlay). Appended after
     #     TITLEPIC -> no downstream base shift. Transparent patch pixels (grid==-1) -> tile index 0. ===
-    MENU_LUMPS=["M_EPISOD","M_EPI1","M_EPI2","M_EPI3","M_NEWG","M_SKILL","M_JKILL","M_ROUGH","M_HURT","M_ULTRA","M_NMARE","M_SKULL1","M_SKULL2"]
+    MENU_LUMPS=["M_EPISOD","M_EPI1","M_EPI2","M_EPI3","M_EPI4","M_NEWG","M_SKILL","M_JKILL","M_ROUGH","M_HURT","M_ULTRA","M_NMARE","M_SKULL1","M_SKULL2"]
     MENU_TILE0 = TITLE_TILE0 + TCOLS*TROWS
     m_off=[]; m_cols=[]; m_rows=[]; m_w=[]; m_h=[]; m_pal=[]; m_base=0; m_have=1
     for _nm in MENU_LUMPS:
@@ -897,6 +909,78 @@ if "--ramps" in sys.argv:
             print("MENU: TILE0=%d, %d lumps, %d tiles"%(MENU_TILE0,len(MENU_LUMPS),m_base))
         else:
             f.write("/* generated by wad2c.py --ramps: menu lumps absent */\n#define MENU_HAVE 0\n")
+    # === INTERPIC (intermission): the DOOM level-complete background WIMAP0 (E1 area map), baked as a
+    #     20x14 sprite tilemap EXACTLY like TITLEPIC (per-tile 15-colour palette, vertical stretch to fill
+    #     the active area). Shown between levels. Appended LAST in the ramps block -> nothing in-block shifts
+    #     (downstream vsfloor/vsceil/vsflat re-bake off ramps.c1 via the Makefile). ===
+    INTER_TILE0 = MENU_TILE0 + m_base; ICOLS, IROWS = 20, 14; _ig = None
+    try: _iw,_ih,_ilo,_ito,_ig = parse_patch(glump("WIMAP0"))
+    except Exception as _e: print("WIMAP0: not found (%s) -> no intermission screen" % _e)
+    if _ig:
+        _rgb=_np.zeros((IROWS*16,ICOLS*16,3),dtype=_np.uint8)
+        for _y in range(IROWS*16):
+            _sy=_y*_ih//(IROWS*16)
+            if _sy>=_ih: continue
+            for _x in range(min(_iw,ICOLS*16)):
+                _i=_ig[_sy][_x]
+                if _i>=0: _rgb[_y,_x]=PALRGB[_i]
+        _idx=_np.zeros((IROWS*16,ICOLS*16),dtype=_np.uint8); _pals=[]; _pmap={}; _tmap=[[0]*ICOLS for _ in range(IROWS)]
+        for _ty in range(IROWS):
+            for _tx in range(ICOLS):
+                _q=Image.fromarray(_rgb[_ty*16:_ty*16+16,_tx*16:_tx*16+16]).quantize(colors=15,method=Image.MEDIANCUT)
+                _qp=(_q.getpalette()+[0]*45)[:45]; _qd=list(_q.getdata())
+                _cols=tuple((_qp[_c*3],_qp[_c*3+1],_qp[_c*3+2]) for _c in range(15))
+                _key=tuple(_ngc(*_c) for _c in _cols)
+                if _key not in _pmap: _pmap[_key]=len(_pals); _pals.append(_cols)
+                _tmap[_ty][_tx]=_pmap[_key]
+                for _p in range(256): _idx[_ty*16+_p//16,_tx*16+_p%16]=_qd[_p]+1
+        MAXIPAL=248
+        if len(_pals)>MAXIPAL:
+            _use=[0]*len(_pals)
+            for _ty in range(IROWS):
+                for _tx in range(ICOLS): _use[_tmap[_ty][_tx]]+=1
+            _ord=sorted(range(len(_pals)), key=lambda p:-_use[p]); _keep=set(_ord[:MAXIPAL])
+            def _ipd(a,b): return sum(min((a[i][0]-b[j][0])**2+(a[i][1]-b[j][1])**2+(a[i][2]-b[j][2])**2 for j in range(15)) for i in range(15))
+            def _icm(c,pal):
+                _bi,_bd=0,1<<60
+                for _i,_pc in enumerate(pal):
+                    _d=(c[0]-_pc[0])**2+(c[1]-_pc[1])**2+(c[2]-_pc[2])**2
+                    if _d<_bd: _bd,_bi=_d,_i
+                return _bi
+            _near={_d: min(_ord[:MAXIPAL], key=lambda k:_ipd(_pals[_d],_pals[k])) for _d in _ord[MAXIPAL:]}
+            for _ty in range(IROWS):
+                for _tx in range(ICOLS):
+                    _p=_tmap[_ty][_tx]
+                    if _p in _keep: continue
+                    _k=_near[_p]
+                    for _yy in range(16):
+                        for _xx in range(16):
+                            _oi=int(_idx[_ty*16+_yy,_tx*16+_xx])
+                            if _oi: _idx[_ty*16+_yy,_tx*16+_xx]=_icm(_pals[_p][_oi-1],_pals[_k])+1
+                    _tmap[_ty][_tx]=_k
+            _comp={_old:_new for _new,_old in enumerate(_ord[:MAXIPAL])}
+            _pals=[_pals[_ord[_i]] for _i in range(MAXIPAL)]
+            for _ty in range(IROWS):
+                for _tx in range(ICOLS): _tmap[_ty][_tx]=_comp[_tmap[_ty][_tx]]
+            print("INTERPIC: capped palettes to %d (merged %d least-used)"%(MAXIPAL,len(_use)-MAXIPAL))
+        _gi=Image.fromarray(_idx,'P'); _gi.putpalette(sum([[_v,_v,_v] for _v in range(256)],[]))
+        _gp="%s/interpic.gif"%tmpd; _gi.save(_gp,optimize=False)
+        _ic1="%s/interpic.c1"%tmpd; _ic2="%s/interpic.c2"%tmpd
+        subprocess.run([_TILETOOL,"--sprite","-c",_gp,"-o",_ic1,_ic2],check=True,env=_ttenv)
+        ramp_c1+=open(_ic1,'rb').read(); ramp_c2+=open(_ic2,'rb').read()
+        with open(os.path.join(ngdir,"interpic.h"),"w") as f:
+            f.write("/* generated by wad2c.py --ramps: DOOM WIMAP0 intermission, %dx%d sprite tilemap, per-tile palette */\n"%(ICOLS,IROWS))
+            f.write("#define INTER_HAVE 1\n#define INTER_TILE0 %d\n#define INTER_COLS %d\n#define INTER_ROWS %d\n#define INTER_NPAL %d\n"%(INTER_TILE0,ICOLS,IROWS,len(_pals)))
+            f.write("static const unsigned short INTER_PAL16[%d][16]={\n"%len(_pals))
+            for _pc in _pals: f.write("{0,"+",".join("0x%04X"%_ngc(*_c) for _c in _pc)+"},\n")
+            f.write("};\nstatic const unsigned char INTER_MAP[%d][%d]={\n"%(IROWS,ICOLS))
+            for _ty in range(IROWS): f.write("{"+",".join(str(_tmap[_ty][_tx]) for _tx in range(ICOLS))+"},\n")
+            f.write("};\n")
+        print("INTERPIC: TILE0=%d, %d tiles, %d palettes"%(INTER_TILE0,ICOLS*IROWS,len(_pals)))
+    else:
+        with open(os.path.join(ngdir,"interpic.h"),"w") as f:
+            f.write("#define INTER_HAVE 0\n#define INTER_TILE0 0\n#define INTER_COLS 20\n#define INTER_ROWS 14\n#define INTER_NPAL 1\n")
+            f.write("static const unsigned short INTER_PAL16[1][16]={{0}};\nstatic const unsigned char INTER_MAP[14][20]={{0}};\n")
     open(os.path.join(ngdir, "ramps.c1"), "wb").write(ramp_c1)
     open(os.path.join(ngdir, "ramps.c2"), "wb").write(ramp_c2)
     with open(os.path.join(ngdir, "ramps.h"), "w") as f:
@@ -985,6 +1069,7 @@ open(os.path.join(ngdir, "textiles.c2"), "wb").write(tiles_c2)
 with open(os.path.join(ngdir, "textiles.h"), "w") as f:
     f.write("/* generated by wad2c.py -- per-texture tile offsets + 16-colour palettes */\n")
     f.write("#define NTEXTILE %d\n" % len(tbase))
+    f.write("#define SKY_TEX_VAL %d\n" % SKY_TEX)   # SKY1 texture index (-1 if none); the live cart defines `const int SKY_TEX` from this (the on-rails map.c that used to provide SKY_TEX is delinked)
     f.write("#define TEX_NSHIFT %d\n" % NSHIFT)   # horizontal phases baked per texture; phase s at TEXTBASE+s*(TEXWT*TEXHT)
     f.write("#define TEX_TOTAL %d\n" % TEX_TOTAL)  # base tile count; per-pixel fog density d lives at base_tile + d*TEX_TOTAL
     f.write("#define FOG_NDENS %d\n" % FOG_NDENS)  # number of fog-dither density levels baked after the base block

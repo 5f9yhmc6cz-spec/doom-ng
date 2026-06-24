@@ -1081,12 +1081,10 @@ int main(int argc,char**argv){
               fprintf(ci,"%d,",v); }
           fprintf(ci,"};\n"); }
         fclose(ci);
-        FILE*b=fopen("neogeo/nodes.bin","wb");                            /* raw banked blob -> 202-p2 (NOT in the ELF; a >1MB .text2 overflows ROM2) */
-        fwrite(data,1,(size_t)dp,b);
-        for(long i=dp;i<NBANK*0x100000L;i++) fputc(0,b);                  /* pad to whole 1MB banks (even size keeps dd's byte-swap clean) */
-        fclose(b);
-        printf("BAKEC on-rails: %d path nodes x %d angles = %ld views, NODES %.0fKB (%ld P2 bank%s) idx %.0fKB\n",
-               PATH_N,NA,ICOUNT,dp/1024.0,NBANK,NBANK==1?"":"s",ICOUNT*4/1024.0);
+        /* (nodes.bin write retired: the dead 8MB P2 it fed is gone. The node-view pass still runs because the
+           ramp manifest below is gathered as its side-effect -- only the unused banked blob output is dropped.) */
+        printf("BAKEC: %d path nodes x %d angles = %ld views computed (ramp manifest only; NODES blob no longer written)\n",
+               PATH_N,NA,ICOUNT);
         printf("BAKEC slope: %ld/%ld wall records have |slope|>2 (%.0f%%), max |slope|=%d px\n",
                slp_nz,slp_tot,slp_tot?100.0*slp_nz/slp_tot:0.0,slp_max);
         printf("BAKEC SKY: %ld sky records across %d/%ld views, max sky h=%dpx; biggest sky view node=%d a=%d (%ld px)\n",
@@ -1175,17 +1173,31 @@ int main(int argc,char**argv){
             for(int q=0;q<np;q++){ int dr=PAL[c].r-PAL[pidx[q]].r,dg=PAL[c].g-PAL[pidx[q]].g,db=PAL[c].b-PAL[pidx[q]].b;
                 long d=(long)dr*dr+dg*dg+db*db; if(d<bd){bd=d;bj=q;} } remap[c]=bj+1; }
         int NAL=getenv("FLNAL")?atoi(getenv("FLNAL")):24, NA=getenv("FLNA")?atoi(getenv("FLNA")):13, NPH=getenv("FLNPHASE")?atoi(getenv("FLNPHASE")):16, H=112, W=320;   /* MIRRORED ANGLES (default 13/24): cart h-flips 13..23. VS variant: FLNA=21 FLNAL=128 -> 21 sets over 60deg (hex symmetry, cart folds heading%21, no mirror). */ unsigned char *buf=(unsigned char*)malloc((long)W*H*NA*NPH);
+        /* FLVS (VS synthetic floor only): COLMAP-FLOOR depth-fade bake -- 15-level mean-hued luminance
+           ramp x perspective depth (far -> dark), the same trick as the ceiling (CLVS). NOT for the
+           per-flat (FLAT=N) gen0 bakes, which keep real texture colours. FLFADE/FLMINB env-tunable. */
+        int flvs=getenv("FLVS")?1:0;
+        float fhr=1.f,fhg=1.f,fhb=1.f, flfade=0.18f, flminb=0.10f, flvis=80.f;   /* flvis = the VISIBLE floor's screen-row extent (dy 0..~80; the near floor below that is under the gun/HUD) */
+        (void)flfade;
+        if(flvs){ long sr=0,sg=0,sb=0; long npx=(long)fw*fh; for(long i=0;i<npx;i++){ SDL_Color c=PAL[t.pix[i]]; sr+=c.r;sg+=c.g;sb+=c.b; }
+            float mr=(float)sr/npx,mg=(float)sg/npx,mb=(float)sb/npx, ml=0.299f*mr+0.587f*mg+0.114f*mb; if(ml<1.f)ml=1.f; fhr=mr/ml;fhg=mg/ml;fhb=mb/ml;
+            if(getenv("FLMINB"))flminb=(float)atof(getenv("FLMINB")); if(getenv("FLVIS"))flvis=(float)atof(getenv("FLVIS")); }
         for(int A=0;A<NA;A++){ angle_t ang=(angle_t)(A*256/NAL); float co=lut_cos(ang), si=lut_sin(ang);
             for(int p=0;p<NPH;p++){               /* phase = 64u/NPH forward steps over the floor period -> flow */
                 float px0=MAP_START.pos.x+p*(64.0f/NPH)*co, py0=MAP_START.pos.y+p*(64.0f/NPH)*si, relz=41.0f;
                 for(int yy=0;yy<H;yy++){ float dy=(float)yy; if(dy<0.5f)dy=0.5f; float D=relz*PCFG.fov/dy, fwx=px0+D*co, fwy=py0+D*si, rt=D/PCFG.fov;
+                    float b=1.f; if(flvs){ b=flminb+(1.f-flminb)*(dy>=flvis?1.f:dy/flvis); }   /* SCREEN-LINEAR fade: near (large dy, FRONT) = 1.0 lighter, far (dy->0, BACK) = flminb darker -> an EVEN front-light/back-dark gradient across the visible band (the author 2026-06-23: the floor's near is under the gun/HUD, so a perspective fade read flat) */
                     for(int x=0;x<W;x++){ float off=(x-160)*rt; int U=imod((int)floorf(fwx+off*si),fw), V=imod((int)floorf(fwy-off*co),fh);
-                        buf[(((long)(A*NPH+p)*H)+yy)*W+x]=(unsigned char)remap[t.pix[V*fw+U]]; } } } }
+                        if(flvs){ SDL_Color c=PAL[t.pix[V*fw+U]]; float lum=0.299f*c.r+0.587f*c.g+0.114f*c.b; int Lv=(int)(lum*b*15.f/256.f); if(Lv<0)Lv=0; if(Lv>14)Lv=14; buf[(((long)(A*NPH+p)*H)+yy)*W+x]=(unsigned char)(Lv+1); }
+                        else buf[(((long)(A*NPH+p)*H)+yy)*W+x]=(unsigned char)remap[t.pix[V*fw+U]]; } } } }
         const char*flout=getenv("FLOUT")?getenv("FLOUT"):"/tmp/floorlut.raw";
         const char*flpal=getenv("FLPAL")?getenv("FLPAL"):"/tmp/floorlut.pal";
         FILE*f=fopen(flout,"wb"); int ww=W,hh=H*NA*NPH,na=NA,nph=NPH;
         fwrite(&ww,4,1,f); fwrite(&hh,4,1,f); fwrite(&na,4,1,f); fwrite(&nph,4,1,f); fwrite(buf,1,(long)W*H*NA*NPH,f); fclose(f);
-        f=fopen(flpal,"w"); for(int q=0;q<np;q++) fprintf(f,"%d %d %d\n",PAL[pidx[q]].r,PAL[pidx[q]].g,PAL[pidx[q]].b); fclose(f);
+        f=fopen(flpal,"w");
+        if(flvs){ for(int q=0;q<15;q++){ float Lb=(q+1)*255.f/15.f; int rr=(int)(fhr*Lb),gg=(int)(fhg*Lb),bb=(int)(fhb*Lb); if(rr>255)rr=255;if(gg>255)gg=255;if(bb>255)bb=255; fprintf(f,"%d %d %d\n",rr,gg,bb); } }
+        else { for(int q=0;q<np;q++) fprintf(f,"%d %d %d\n",PAL[pidx[q]].r,PAL[pidx[q]].g,PAL[pidx[q]].b); }
+        fclose(f);
         printf("BAKEFLOOR: flat=%d (%dx%d), %d colours, %d angles x %d phases, sheet %dx%d -> /tmp/floorlut.raw\n",ff,fw,fh,np,NA,NPH,W,H*NA*NPH);
         SDL_Quit(); return 0;
     }
@@ -1226,17 +1238,31 @@ int main(int argc,char**argv){
         int remap[256]; for(int c=0;c<256;c++){ int bj=0; long bd=1L<<60;
             for(int q=0;q<np;q++){ int dr=PAL[c].r-PAL[pidx[q]].r,dg=PAL[c].g-PAL[pidx[q]].g,db=PAL[c].b-PAL[pidx[q]].b;
                 long d=(long)dr*dr+dg*dg+db*db; if(d<bd){bd=d;bj=q;} } remap[c]=bj+1; }
+        /* INC2 (clvs only): COLMAP-CEILING depth-fade bake -- a 15-level mean-hued LUMINANCE ramp,
+           darkened by perspective depth (far -> dark) -> a smooth 15-step gradient baked into the tiles
+           (vs the 4 runtime palette banks). clfade = darkening per unit relative-depth; clminb = darkest.
+           Env-tunable (CLFADE/CLMINB) for the ride. g_ceildark is dead in the live engine so the ramp
+           palette can own bank 12 outright. */
+        float chr=1.f,chg=1.f,chb=1.f, clfade=0.18f, clminb=0.38f, clpitch=1.f;   /* clpitch>1 = tighter texture pitch (denser pattern) without changing the ceiling height/relz. Ship 1.66 (the author 2026-06-24). */
+        if(clvs){ long sr=0,sg=0,sb=0; long npx=(long)fw*fh; for(long i=0;i<npx;i++){ SDL_Color c=PAL[t.pix[i]]; sr+=c.r;sg+=c.g;sb+=c.b; }
+            float mr=(float)sr/npx,mg=(float)sg/npx,mb=(float)sb/npx, ml=0.299f*mr+0.587f*mg+0.114f*mb; if(ml<1.f)ml=1.f; chr=mr/ml;chg=mg/ml;chb=mb/ml;
+            if(getenv("CLFADE"))clfade=(float)atof(getenv("CLFADE")); if(getenv("CLMINB"))clminb=(float)atof(getenv("CLMINB")); if(getenv("CLPITCH"))clpitch=(float)atof(getenv("CLPITCH")); }
         for(int A=0;A<NA;A++){ angle_t ang=(angle_t)(A*256/NAL); float co=lut_cos(ang), si=lut_sin(ang);
             for(int p=0;p<NPHL;p++){
-                float px0=MAP_START.pos.x+p*(L==2?32:16)*co, py0=MAP_START.pos.y+p*(L==2?32:16)*si, relz=41.0f;   /* A/B: 4 x 16u; C: 2 x 32u */
+                float px0=MAP_START.pos.x+p*(L==2?32:16)*co, py0=MAP_START.pos.y+p*(L==2?32:16)*si, relz=(getenv("CLRELZ")?(float)atof(getenv("CLRELZ")):41.0f);   /* ceiling height above eye; CLRELZ env tunes it. A/B: 4 x 16u; C: 2 x 32u */
                 for(int yy=0;yy<H;yy++){ float dy=(float)yy; if(dy<0.5f)dy=0.5f; float D=relz*PCFG.fov/dy, fwx=px0+D*co, fwy=py0+D*si, rt=D/PCFG.fov;
-                    for(int x=0;x<W;x++){ float off=(x-160)*rt; int U=imod((int)floorf(fwx+off*si),fw), V=imod((int)floorf(fwy-off*co),fh);
-                        buf[(((long)(A*NPHL+p)*H)+yy)*W+x]=(unsigned char)remap[t.pix[V*fw+U]]; } } } }
+                    float b=1.f; if(clvs){ b=1.f-(112.f/dy-1.f)*clfade; if(b<clminb)b=clminb; if(b>1.f)b=1.f; }   /* 112/dy = perspective depth ratio (1=near .. large=horizon) -> b fades far rows dark */
+                    for(int x=0;x<W;x++){ float off=(x-160)*rt; int U=imod((int)floorf((fwx+off*si)*clpitch),fw), V=imod((int)floorf((fwy-off*co)*clpitch),fh);   /* CLPITCH scales the texture sampling -> denser pattern (tighter pitch), same height */
+                        if(clvs){ SDL_Color c=PAL[t.pix[V*fw+U]]; float lum=0.299f*c.r+0.587f*c.g+0.114f*c.b; int Lv=(int)(lum*b*15.f/256.f); if(Lv<0)Lv=0; if(Lv>14)Lv=14; buf[(((long)(A*NPHL+p)*H)+yy)*W+x]=(unsigned char)(Lv+1); }   /* texel luminance (panel pattern) x depth fade -> ramp level 1..15 */
+                        else buf[(((long)(A*NPHL+p)*H)+yy)*W+x]=(unsigned char)remap[t.pix[V*fw+U]]; } } } }
         { const char*rn=clvs?"/tmp/vsceil.raw":((L==0)?"/tmp/ceillut.raw":((L==1)?"/tmp/ceillut2.raw":"/tmp/ceillut3.raw"));
           const char*pn=clvs?"/tmp/vsceil.pal":((L==0)?"/tmp/ceillut.pal":((L==1)?"/tmp/ceillut2.pal":"/tmp/ceillut3.pal"));
           FILE*f=fopen(rn,"wb"); int ww=W,hh=H*NA*NPHL,na=NA,nph=NPHL;
           fwrite(&ww,4,1,f); fwrite(&hh,4,1,f); fwrite(&na,4,1,f); fwrite(&nph,4,1,f); fwrite(buf,1,(long)W*H*NA*NPHL,f); fclose(f);
-          f=fopen(pn,"w"); for(int q=0;q<np;q++) fprintf(f,"%d %d %d\n",PAL[pidx[q]].r,PAL[pidx[q]].g,PAL[pidx[q]].b); fclose(f); }
+          f=fopen(pn,"w");
+          if(clvs){ for(int q=0;q<15;q++){ float Lb=(q+1)*255.f/15.f; int rr=(int)(chr*Lb),gg=(int)(chg*Lb),bb=(int)(chb*Lb); if(rr>255)rr=255;if(gg>255)gg=255;if(bb>255)bb=255; fprintf(f,"%d %d %d\n",rr,gg,bb); } }   /* 15-level mean-hued ramp: idx i -> luminance i*255/15 */
+          else { for(int q=0;q<np;q++) fprintf(f,"%d %d %d\n",PAL[pidx[q]].r,PAL[pidx[q]].g,PAL[pidx[q]].b); }
+          fclose(f); }
         }
         printf("BAKECEIL: 3 LUTs (A+B at 4 phases, spotted C at 2) -> /tmp/ceillut{,2,3}.raw\n");
         SDL_Quit(); return 0;

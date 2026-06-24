@@ -24,7 +24,7 @@ NODE_R ?= 4000
 # already matched to these values -- change all three together or not at all.
 NODE_S ?= 5
 bake-nodes: doomng-host
-	./doomng-host --bakec $(NODE_R) --bakeS $(NODE_S)
+	./doomng-host --bakec $(NODE_R)   # ramps_used.txt manifest ONLY (the ramps anchor needs it). --bakeS/nodes.bin dropped: the live engine never read NODES, and the dead 8MB P2 pack is removed.
 .PHONY: bake-nodes
 
 # CRITICAL: the texture extract only runs WITHOUT --ramps -- `wad2c --ramps` sys.exits before it.
@@ -48,8 +48,8 @@ rom-vs:
 	$(MAKE) bake-nodes                                 # writes ramps_used.txt (the ramps anchor's manifest); its nodes.bin is NOT read by the live cart
 	python3 tools/wad2c.py doom1.wad E1M1 src/map.c --ramps   # ramps AFTER the bake (reads ramps_used.txt)
 	WAD=doom1.wad python3 tools/vs_extract.py          # live ALL-E1 BSP geometry (9 maps) -> neogeo/vs_e1.h
-	FLNA=64 FLNAL=128 FLNPHASE=4 FLOUT=/tmp/vsfloor.raw FLPAL=/tmp/vsfloor.pal ./doomng-host --bakefloor   # LIVE floor LUT raw: 64 sets over 180deg (cart folds heading 2x -> 180deg period, was 32/90deg). h/v-asymmetric base flats no longer repeat every quarter-turn.
-	CLVS=1 CLNA=64 CLNAL=128 ./doomng-host --bakeceil                                            # LIVE grey ceiling LUT raw: 64 sets over 180deg (matches the floor)
+	FLVS=1 FLMINB=0.10 FLVIS=80 FLNA=64 FLNAL=128 FLNPHASE=4 FLOUT=/tmp/vsfloor.raw FLPAL=/tmp/vsfloor.pal ./doomng-host --bakefloor   # LIVE floor LUT raw: 64 sets / 180deg + baked depth-fade RAMP (INC2 floor): gentle onset + dark horizon so the VISIBLE far-half shows contrast (the near floor is under the gun/HUD). FLFADE/FLMINB tunable.
+	CLVS=1 CLNA=128 CLNAL=256 CLPITCH=1.66 ./doomng-host --bakeceil                                           # LIVE ceiling LUT raw: 128 sets / finer-180 fold + baked depth-fade RAMP (INC2, CLFADE/CLMINB env-tunable). CLPITCH=1.66: higher = TIGHTER/denser pitch (the author 2026-06-24, settled). Same tile count -> no chain shift.
 	python3 tools/vsfloorlut.py                        # live hex floor LUT -> neogeo/vsfloor.{c1,c2,h} (reads /tmp/vsfloor.raw)
 	python3 tools/vsceillut.py                         # live ceiling LUT  -> neogeo/vsceil.{c1,c2,h}  (reads /tmp/vsceil.raw)
 	WAD=doom1.wad python3 tools/vsflatlut.py           # per-flat LUT bank -> neogeo/vsflat.{c1,c2,h} (drives ./doomng-host --bakefloor per flat; MUST follow vsfloorlut/vsceillut + wad2c)

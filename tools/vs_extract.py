@@ -15,7 +15,7 @@ D=[(struct.unpack_from("<ii8s",data,dofs+i*16)) for i in range(nl)]
 D=[(nm.split(b'\0')[0].decode('latin1'),fp,sz) for (fp,sz,nm) in D]
 # ALL-E1 ordering (shared with wad2c via tools/vs_flats): every map indexes the SAME C-ROM tiles
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from vs_flats import e1_assets, flat_slot
+from vs_flats import e1_assets, flat_slot, _episodes
 WALLS_E1,_FLATS,_NM=e1_assets(WAD)
 texid={n:i for i,n in enumerate(WALLS_E1)}
 def tid(n): return texid.get(n.upper(),-1) if (n and n!="-") else -1
@@ -152,7 +152,7 @@ CLASS_NAMES=["CLS_BAR","CLS_IMP","CLS_POSS","CLS_SPOS",
              "CLS_CLIP","CLS_AMMO","CLS_SHEL","CLS_SBOX",
              "CLS_ROCK","CLS_BROK"]
 
-MAPS=[f"E{EPISODE}M{m}" for m in range(1,10) if any(d[0]==f"E{EPISODE}M{m}" for d in D)]
+MAPS=[f"E{ep}M{m}" for ep in _episodes(None) for m in range(1,10) if any(d[0]==f"E{ep}M{m}" for d in D)]   # DOOMNG_EPISODES env: "1"=E1, "all"=E1-E4 (36 maps)
 md=[extract_map(M) for M in MAPS]
 NMAP=len(MAPS)
 for i,M in enumerate(MAPS):
@@ -160,59 +160,86 @@ for i,M in enumerate(MAPS):
           %(M,len(md[i]['segs']),len(md[i]['ssecs']),len(md[i]['nodes']),md[i]['root'],md[i]['sx'],md[i]['sy'],md[i]['sa']))
 
 def J(vals): return ",".join(str(v) for v in vals) if vals else "0"
+
+# --- BANKED geometry: pack every map into a flat blob (neogeo/vs_geo.bin) placed in .text2/ROM2.
+#     C-array pointer tables can't bank (linker VMAs past 0x2FFFFF aren't runtime-addressable), so the
+#     geometry is a blob accessed by offset. vs_set_map(m): P_ROM_SWITCH_BANK(VE_BANK[m]) then walk the
+#     ve_* pointers from (0x200000 + VE_OFF[m]). Layout per map (MUST match vs_set_map in main.c): every
+#     16-bit array first (big-endian = m68k pre-swab order), then every 8-bit array -> shorts stay
+#     word-aligned. Maps are bank-PACKED so none straddles a 1MB (0x100000) boundary; each base is even.
+BANK=0x100000
+def _pack(m):
+    S=m['segs']; SS=m['ssecs']; ND=m['nodes']; TH=m['things']; b=bytearray()
+    w=lambda v: b.extend(struct.pack(">H", v & 0xFFFF))                 # 16-bit big-endian
+    for ci in (0,1,2,3,4,5,6,7,8,9,10,16,17,18,19,21,22):              # X0..LT,FSEC,BSEC,USESEC,USELO,ULEN,YOFF (xNSEG)
+        for s in S: w(s[ci])
+    for ci in (0,1):                                                    # SSC,SSF (xNSS)
+        for s in SS: w(s[ci])
+    for ci in (0,1,2,3,4,5):                                            # NX,NY,NDX,NDY,NR,NL (xNNODE)
+        for n in ND: w(n[ci])
+    for key in ('rbb','lbb'):                                           # NRB,NLB (x4*NNODE)
+        for box in m[key]:
+            for v in box: w(v)
+    for ci in (0,1,3):                                                  # THX,THY,THZ (xNTH)
+        for t in TH: w(t[ci])
+    for ci in (11,12,13,14,15,20,23):                                  # FLAG,FFL,CFL,BFL,BCL,U0,PEG (xNSEG)
+        for s in S: b.append(s[ci] & 0xFF)
+    for ci in (2,4):                                                    # THA,THC (xNTH)
+        for t in TH: b.append(t[ci] & 0xFF)
+    if len(b)&1: b.append(0)                                            # even-pad: keep the next map's shorts aligned
+    return bytes(b)
+
+blob=bytearray(); VE_BANK=[]; VE_OFF=[]; _bk=0; _off=0
+for m in md:
+    mb=_pack(m)
+    assert len(mb)<=BANK, "a single map's geometry exceeds one 1MB bank"
+    if _off+len(mb)>BANK: blob.extend(b'\xff'*(BANK-_off)); _bk+=1; _off=0   # don't straddle a bank boundary
+    VE_BANK.append(_bk); VE_OFF.append(_off); blob.extend(mb); _off+=len(mb)
+NBANK=_bk+1
+blob.extend(b'\xff'*(NBANK*BANK-len(blob)))                                   # pad to whole 1MB banks
+open("neogeo/vs_geo.bin","wb").write(blob)
+
+# self-check: reconstruct from the blob and assert == the in-memory extraction, for EVERY map
+# (catches endianness / array-order / bank-offset bugs before the blob ever reaches the cart).
+def _rd16(o): return struct.unpack(">H", blob[o:o+2])[0]
+for mi,m in enumerate(md):
+    base=VE_BANK[mi]*BANK+VE_OFF[mi]; ns=len(m['segs']); nss=len(m['ssecs']); nn=len(m['nodes']); nth=len(m['things'])
+    for i in range(ns):                                                   # X0 = first 16-bit array (tests endianness + base)
+        assert _rd16(base+2*i)==(m['segs'][i][0]&0xFFFF), "X0 mismatch map %d seg %d"%(mi,i)
+    nshort=17*ns + 2*nss + 14*nn + 3*nth                                  # all 16-bit elements before the byte section
+    bb=base+2*nshort
+    for i in range(ns):                                                   # FLAG = first byte array (tests the section split)
+        assert blob[bb+i]==(m['segs'][i][11]&0xFF), "FLAG mismatch map %d seg %d"%(mi,i)
+    if nth:                                                               # THC = last byte array (tests the full block length)
+        thc=bb+7*ns+nth
+        for i in range(nth): assert blob[thc+i]==(m['things'][i][4]&0xFF), "THC mismatch map %d thing %d"%(mi,i)
+print("self-check OK: blob round-trips for all %d maps"%NMAP)
+
 with open("neogeo/vs_e1.h","w") as f:
-    f.write("/* generated by tools/vs_extract.py -- ALL of Episode 1 BSP geometry, A1 pointer tables */\n")
+    f.write("/* generated by tools/vs_extract.py -- BANKED geometry (neogeo/vs_geo.bin -> .text2/ROM2).\n")
+    f.write("   vs_set_map(m): P_ROM_SWITCH_BANK(VE_BANK[m]); walk ve_* from (0x200000 + VE_OFF[m]).\n")
+    f.write("   Blob order per map: 16-bit [X0 Y0 X1 Y1 FF FC BF BC MT UT LT FSEC BSEC USESEC USELO ULEN YOFF]xNSEG,\n")
+    f.write("   [SSC SSF]xNSS, [NX NY NDX NDY NR NL]xNNODE, [NRB NLB]x4NNODE, [THX THY THZ]xNTH;\n")
+    f.write("   then 8-bit [FLAG FFL CFL BFL BCL U0 PEG]xNSEG, [THA THC]xNTH. */\n")
     f.write("#define VE_NMAP %d\n"%NMAP)
+    f.write("#define VE_NBANK %d\n"%NBANK)
     f.write("#define VE_MAXSEG %d\n"%max(len(m['segs']) for m in md))
     f.write("#define VE_MAXSS %d\n"%max(len(m['ssecs']) for m in md))
     f.write("#define VE_MAXNODE %d\n"%max(len(m['nodes']) for m in md))
     f.write("#define VE_MAXSEC %d\n"%max(m['nsec'] for m in md))
-    # per-map scalar tables
+    f.write("#define VE_MAXTH %d\n"%max(1,max(len(m['things']) for m in md)))
     f.write("static const short VE_NSEG_MAP[VE_NMAP]={%s};\n"%J([len(m['segs']) for m in md]))
     f.write("static const short VE_NSEC_MAP[VE_NMAP]={%s};\n"%J([m['nsec'] for m in md]))
     f.write("static const short VE_NSS_MAP[VE_NMAP]={%s};\n"%J([len(m['ssecs']) for m in md]))
     f.write("static const short VE_NNODE_MAP[VE_NMAP]={%s};\n"%J([len(m['nodes']) for m in md]))
+    f.write("static const short VE_NTH_MAP[VE_NMAP]={%s};\n"%J([len(m['things']) for m in md]))
     f.write("static const short VE_ROOT_MAP[VE_NMAP]={%s};\n"%J([m['root'] for m in md]))
     f.write("static const short VE_SX_MAP[VE_NMAP]={%s};\n"%J([m['sx'] for m in md]))
     f.write("static const short VE_SY_MAP[VE_NMAP]={%s};\n"%J([m['sy'] for m in md]))
     f.write("static const short VE_SA_MAP[VE_NMAP]={%s};\n"%J([m['sa'] for m in md]))
-    def emit(name, ctype, rows):
-        # rows[i] = list of values for map i
-        for i in range(NMAP):
-            f.write("static const %s VE%s_%d[%d]={%s};\n"%(ctype,name,i,max(1,len(rows[i])),J(rows[i])))
-        f.write("static const %s* const VE%s_MAP[VE_NMAP]={%s};\n"%(ctype,name,",".join("VE%s_%d"%(name,i) for i in range(NMAP))))
-    SEGCOL=[("X0",0),("Y0",1),("X1",2),("Y1",3),("FF",4),("FC",5),("BF",6),("BC",7),("MT",8),("UT",9),("LT",10)]
-    for nm,ci in SEGCOL:
-        emit(nm,"short",[[s[ci] for s in m['segs']] for m in md])
-    emit("FLAG","unsigned char",[[s[11] for s in m['segs']] for m in md])
-    emit("FFL","unsigned char",[[s[12] for s in m['segs']] for m in md])   # per-seg FRONT FLOOR flat slot
-    emit("CFL","unsigned char",[[s[13] for s in m['segs']] for m in md])   # per-seg FRONT CEIL  flat slot (0xFF=sky)
-    emit("BFL","unsigned char",[[s[14] for s in m['segs']] for m in md])   # per-seg BACK  FLOOR flat slot (0xFF=none; the through-opening zone)
-    emit("BCL","unsigned char",[[s[15] for s in m['segs']] for m in md])   # per-seg BACK  CEIL  flat slot (0xFF=sky/none)
-    emit("FSEC","unsigned short",[[s[16] for s in m['segs']] for m in md]) # per-seg FRONT sector id -> g_secdc ceiling override
-    emit("BSEC","unsigned short",[[s[17] for s in m['segs']] for m in md]) # per-seg BACK  sector id (0xFFFF=one-sided)
-    emit("USESEC","unsigned short",[[s[18] for s in m['segs']] for m in md]) # per-seg LIFT target sector (tag-resolved; 0xFFFF=none)
-    emit("USELO","short",[[s[19] for s in m['segs']] for m in md])           # per-seg LIFT drop = low-high (<=0)
-    emit("U0","unsigned char",[[s[20] for s in m['segs']] for m in md])      # per-seg WALL-U at vertex v1 (texture px, mod 256) -> perspective texture mapping
-    emit("ULEN","unsigned short",[[s[21] for s in m['segs']] for m in md])   # per-seg U span (seg world length, texture px)
-    emit("YOFF","short",[[s[22] for s in m['segs']] for m in md])            # per-seg FRONT sidedef Y offset (rowoffset px, signed) -> vertical peg (V companion 2b)
-    emit("PEG","unsigned char",[[s[23] for s in m['segs']] for m in md])     # per-seg peg flags: bit0=DONTPEGTOP, bit1=DONTPEGBOTTOM (V companion 2b)
-    emit("SSC","unsigned short",[[s[0] for s in m['ssecs']] for m in md])
-    emit("SSF","unsigned short",[[s[1] for s in m['ssecs']] for m in md])
-    for nm,ci in [("NX",0),("NY",1),("NDX",2),("NDY",3)]:
-        emit(nm,"short",[[n[ci] for n in m['nodes']] for m in md])
-    emit("NR","unsigned short",[[n[4] for n in m['nodes']] for m in md])
-    emit("NL","unsigned short",[[n[5] for n in m['nodes']] for m in md])
-    emit("NRB","short",[[v for b in m['rbb'] for v in b] for m in md])
-    emit("NLB","short",[[v for b in m['lbb'] for v in b] for m in md])
-    # THINGS (live actors): class enum + per-map A1 tables (x,y world; ang 0..255; z floor height; class)
-    f.write("#define VE_MAXTH %d\n"%max(1,max(len(m['things']) for m in md)))
+    f.write("static const unsigned char VE_BANK[VE_NMAP]={%s};\n"%J(VE_BANK))
+    f.write("static const unsigned long VE_OFF[VE_NMAP]={%s};\n"%J(VE_OFF))
     for i,nm in enumerate(CLASS_NAMES): f.write("#define %s %d\n"%(nm,i))
-    f.write("static const short VE_NTH_MAP[VE_NMAP]={%s};\n"%J([len(m['things']) for m in md]))
-    emit("THX","short",[[t[0] for t in m['things']] for m in md])
-    emit("THY","short",[[t[1] for t in m['things']] for m in md])
-    emit("THA","unsigned char",[[t[2] for t in m['things']] for m in md])
-    emit("THZ","short",[[t[3] for t in m['things']] for m in md])
-    emit("THC","unsigned char",[[t[4] for t in m['things']] for m in md])
-print("wrote neogeo/vs_e1.h (%d maps)"%NMAP)
-print("things (barrels): "+", ".join("%s=%d"%(M,len(md[i]['things'])) for i,M in enumerate(MAPS)))
+print("wrote neogeo/vs_e1.h + vs_geo.bin: %d maps, %d bank(s), blob %.2f MB"%(NMAP,NBANK,len(blob)/1048576))
+print("  -> set PROM2SIZE=%d (0x%X) in neogeo/rom.mk"%(NBANK*BANK,NBANK*BANK))
+print("  things/map: "+", ".join("%s=%d"%(M,len(md[i]['things'])) for i,M in enumerate(MAPS)))

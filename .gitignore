@@ -39,6 +39,9 @@ neogeo/vsceil.h
 neogeo/floorlut.h
 neogeo/gngeo_data_doomng.zip
 neogeo/sprites.h
+neogeo/fbsolid.h
+neogeo/fogcm.h
+dist/palette128/
 neogeo/e1m*.adpcmb
 neogeo/nodes_data.c
 neogeo/nodes_idx.c

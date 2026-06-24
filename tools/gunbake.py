@@ -13,7 +13,8 @@ VERIFY="--verify" in sys.argv
 
 # weapon ready-frames, in ARMS slot order (1=fist/saw, 2=pistol, ...). plasma/BFG absent in shareware.
 WEAPONS=[("FIST","PUNGA0"),("PISTOL","PISGA0"),("SHOTGUN","SHTGA0"),
-         ("CHAINGUN","CHGGA0"),("ROCKET","MISGA0"),("CHAINSAW","SAWGA0")]
+         ("CHAINGUN","CHGGA0"),("ROCKET","MISGA0"),("CHAINSAW","SAWGA0"),
+         ("PLASMA","PLSGA0"),("BFG","BFGGA0")]   # registered/Ultimate doom.wad adds plasma rifle + BFG9000 (absent in shareware)
 
 data=open(WAD,"rb").read()
 _,nl,diro=struct.unpack_from("<4sii",data,0)
@@ -81,7 +82,7 @@ def enc_cell(px):                 # 64 indices (0=transparent) -> 32B NG fix til
             out[k]=(px[8*y+xa]&0xF)|((px[8*y+xb]&0xF)<<4); k+=1
     return bytes(out)
 
-NBOB=3; BOB_STEP=2                                 # vertical bob: 3 baked phases, 2px apart (cart cycles 0-1-2-1 = ~4px) + 1 headroom tile row
+NBOB=2; BOB_STEP=2                                 # vertical bob: 2 baked phases (was 3) so all 8 weapons fit the 4096-tile fix layer; cart clamps 0-1-2-1 -> 0-1-1-1
 tiles=[]; meta=[]; pals=[]
 for tag,lname in WEAPONS:
     w,h,lo,to,grid=parse_patch(lump(lname))
