@@ -7,7 +7,7 @@ import sys, struct, wave
 
 WANT = {  # lump -> output (matches neogeo/Makefile's V-ROM recipe)
     "DSPISTOL": "snd_pistol.wav",
-    "DSPOPAIN": "snd_impdeath.wav",   # (legacy name) the shared baddie scream -- kept; per-class deaths below override it
+    "DSPOPAIN": "snd_impdeath.wav",   # (legacy name) the shared enemy scream -- kept; per-class deaths below override it
     "DSBAREXP": "snd_boom.wav",
     "DSITEMUP": "snd_itemup.wav",
     "DSDOROPN": "snd_dooropn.wav",
@@ -36,7 +36,7 @@ for i in range(nl):
             pcm = bytes(max(0, min(255, (b - 128) * g + 128)) for b in pcm)
         # RESAMPLE to the YM2610 ADPCM-A FIXED playback rate so SFX play at the correct PITCH. ADPCM-A has
         # no rate register: every sample is clocked out at ~18518Hz (8MHz/432). DOOM SFX are 11025Hz, so
-        # encoded as-is they play ~1.68x too fast ("Hans Moleman"). Upsampling makes the .adpcma carry 1.68x
+        # encoded as-is they play ~1.68x too fast (pitched up). Upsampling makes the .adpcma carry 1.68x
         # more samples -> correct pitch + duration. This CHANGES .adpcma sizes, so the doomsnd.s _sfxtab MUST
         # be regenerated afterwards (tools/gen_sfxtab.py reads the built .adpcma sizes).
         TARGET = 18518

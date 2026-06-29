@@ -1,6 +1,7 @@
 # DOOM-NG — free-roam DOOM on a stock Neo Geo
 
-A live, free-roam renderer of **DOOM Episode 1** (all nine maps, E1M1–E1M9) running on an
+A live, free-roam renderer of **DOOM** — Episode 1 (E1M1–E1M9) by default, or **all four episodes
+of Ultimate DOOM (E1M1–E4M9)** with `DOOMNG_EPISODES=all` + the full IWAD — running on an
 unmodified Neo Geo (Motorola 68000 @ 12 MHz, no expansion hardware). You walk and turn
 freely; each frame the 68000 walks DOOM's original **BSP tree** to find what's visible and
 projects it, and the Neo Geo's **hardware sprite scaler** draws the textured wall columns.
@@ -99,6 +100,17 @@ bake the live floor/ceiling perspective LUTs (`vsfloorlut.py`/`vsceillut.py`, 64
 over 180°) and the per-flat LUT bank (`vsflatlut.py`), then compile the cart. It's
 idempotent — re-run any time you change a tool or the WAD. Subsequent engine-only rebuilds:
 `make -C neogeo cart`.
+
+> **Build all four episodes (Ultimate DOOM):** pass the full IWAD and set `DOOMNG_EPISODES=all`:
+>
+> ```sh
+> DOOMNG_EPISODES=all make rom-vs WAD=/path/to/doom.wad
+> ```
+>
+> This bakes all 36 maps (E1M1–E4M9), the full monster bestiary, and every episode's flats. The
+> live BSP-geometry P-ROM auto-banks to fit (no size knob to set). E2/E3 **music** stays silent
+> until you run `sh tools/genmusic_ultimidi.sh` (E4 reuses E1–E3 tracks). The default build (no
+> env, or the shareware `doom1.wad`) is Episode 1 only.
 
 **No Neo Geo BIOS needed for the gngeo run path** — `make -C neogeo run` boots on the open
 BIOS bundled with gngeo, so you don't need (and must not commit) any copyrighted SNK/UniBIOS

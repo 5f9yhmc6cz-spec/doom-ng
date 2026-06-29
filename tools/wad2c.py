@@ -384,7 +384,7 @@ ngdir = os.path.join(os.path.dirname(crom_path), "neogeo")
 tmpd = "/tmp/dngtex"; os.makedirs(tmpd, exist_ok=True)
 tiles_c1 = bytearray(); tiles_c2 = bytearray()
 tbase = []; twt = []; tht = []; tpal16 = []; tilebase = 0; fogsrc = []
-NSHIFT = 16  # horizontal sub-tile phases per texture: 1-TEXEL granularity (was 8/2-texel). Textiles+ramps x2 in C-ROM -- offset by the symmetry-mirror C-ROM savings. Visibly sharper wall crops.
+NSHIFT = 16  # horizontal sub-tile phases per texture: 1-TEXEL granularity (was 8/2-texel). Textiles+ramps x2 in C-ROM -- afforded by the symmetry/mirror canonicalization savings. Visibly sharper wall crops.
 _ttenv = dict(os.environ); _ttenv["PATH"] = _BREWPY + _ttenv.get("PATH", "")
 def remap15(used):
     """opaque Doom-palette index -> nearest KEPT colour's local index (1..15); never index 0,
@@ -1094,17 +1094,33 @@ spr_want = [("PISTOL", "PISGA0", 0, None), ("IMP", "TROOA1", 0, None), ("STBAR",
             ("FACE", "STFST00", 0, None),  ("FACEL", "STFST02", 0, "FACE"), ("FACER", "STFST01", 0, "FACE"), ("FACEG", "STFEVL0", 0, "FACE"),
             ("IMPB", "TROOB1", 0, "IMP"), ("IMPDI", "TROOI0", 0, "IMP"), ("IMPDK", "TROOK0", 0, "IMP"), ("IMPDM", "TROOM0", 0, "IMP"),
             ("POSS", "POSSA1", 0, None), ("SPOS", "SPOSA1", 0, None),
+            ("SARG", "SARGA1", 0, None), ("BOSS", "BOSSA1", 0, None),   # E1 monsters: Pinky/Demon + Baron of Hell (per-map palettes -- see MONSTER_PERMAP)
             ("POSSD", "POSSL0", 0, "POSS"), ("SPOSD", "SPOSL0", 0, "SPOS"),   # DIE5 resting-corpse frames -> zombieman/shotgunner leave bodies (imp already has IMPDM)
+            ("SARGD", "SARGN0", 0, "SARG"), ("BOSSD", "BOSSO0", 0, "BOSS"),   # Pinky/Baron DIE-rest corpses
+            ("HEAD", "HEADA1", 0, None), ("SPID", "SPIDA1D1", 0, None), ("CYBR", "CYBRA1", 0, None),   # E2-4: Cacodemon, Spider Mastermind, Cyberdemon (base front frames)
+            ("SKUL", "SKULA1", 0, None), ("SKUL_B0", "SKULB1", 0, "SKUL"),   # Lost Soul: rotation-less (no A2A8), A/B walk frames
+            ("HEADD", "HEADL0", 0, "HEAD"), ("SPIDD", "SPIDP0", 0, "SPID"), ("CYBRD", "CYBRP0", 0, "CYBR"), ("SKULD", "SKULF0", 0, "SKUL"),   # corpses (Lost Soul uses a death frame as its body)
             ("BAR", "BAR1A0", 0, None), ("BEXPC", "BEXPC0", 0, None), ("BEXPA", "BEXPB0", 0, "BEXPC"), ("BEXPE", "BEXPE0", 0, "BEXPC")]
 # MONSTER 8-WAY ROTATIONS (frame A): R0 = the A1 front already baked above (IMP/POSS/SPOS). Bake R1..R4 =
 # A2A8/A3A7/A4A6/A5; rotations 6/7/8 reuse R3/R2/R1 H-flipped at draw. Share the base monster's palette.
-for _mon, _b in (("IMP", "TROO"), ("POSS", "POSS"), ("SPOS", "SPOS")):
+for _mon, _b in (("IMP", "TROO"), ("POSS", "POSS"), ("SPOS", "SPOS"), ("SARG", "SARG"), ("BOSS", "BOSS"), ("HEAD", "HEAD")):   # mirror-packed (5 A + 5 B). SPID is also mirror-packed but its rot1/rot5 use CROSS-FRAME lump names -> handled explicitly below.
     for _ri, _suf in ((1, "A2A8"), (2, "A3A7"), (3, "A4A6"), (4, "A5")):       # A-frame R1..R4 (R0 = the A1 above)
         spr_want.append(("%s_R%d" % (_mon, _ri), _b + _suf, 0, _mon))
     for _ri, _suf in ((0, "B1"), (1, "B2B8"), (2, "B3B7"), (3, "B4B6"), (4, "B5")):  # B-frame R0..R4 (idle/walk frame 2)
         spr_want.append(("%s_B%d" % (_mon, _ri), _b + _suf, 0, _mon))
+for _ri in range(1, 8):   # CYBERDEMON: 8 INDIVIDUAL rotations (NOT mirror-packed). R1..R7 = CYBRA2..A8 (R0 = the CYBRA1 base above)
+    spr_want.append(("CYBR_R%d" % _ri, "CYBRA%d" % (_ri + 1), 0, "CYBR"))
+for _ri in range(8):      # CYBR B-frame B0..B7 = CYBRB1..B8
+    spr_want.append(("CYBR_B%d" % _ri, "CYBRB%d" % (_ri + 1), 0, "CYBR"))
+# SPIDER: mirror-packed (5 A + 5 B) but rotations 1 & 5 use CROSS-FRAME lump names (A1D1/A5D5, B1E1/B5E5), not the standard A5/B1/B5. Base R0 = SPIDA1D1 (in spr_want above).
+for _ri, _l in ((1,"SPIDA2A8"),(2,"SPIDA3A7"),(3,"SPIDA4A6"),(4,"SPIDA5D5")):
+    spr_want.append(("SPID_R%d" % _ri, _l, 0, "SPID"))
+for _ri, _l in ((0,"SPIDB1E1"),(1,"SPIDB2B8"),(2,"SPIDB3B7"),(3,"SPIDB4B6"),(4,"SPIDB5E5")):
+    spr_want.append(("SPID_B%d" % _ri, _l, 0, "SPID"))
 spr_c1 = bytearray(); spr_c2 = bytearray(); sprbase = 0; sprmeta = []
 spr_paldb = {}; spr_nextpal = 0          # tag -> (local, remap, pal16, palslot)
+item_pal16 = []                          # per-map sprite palettes: E1 MONSTERS (SARG/BOSS) first, then items; uploaded after the flats via g_itembase
+MONSTER_PERMAP = {"SARG", "BOSS", "HEAD", "SKUL", "CYBR", "SPID"}   # all added monster bases routed PER-MAP (global slots 244-254 are full); rotations/corpses share via palfrom
 # BILLBOARD 2x: the Neo Geo shrinks sprites but CAN'T magnify them, so close/mid billboards rendered at
 # source-pixel size = ~0.7 of true perspective height. Bake the world billboards at 2x source -> the cart's
 # vs_billboard /512 size math (cap 512) reaches true size for depth>=80 (shrink-only). The HUD/gun sprites
@@ -1127,7 +1143,10 @@ for tag, lname, opaque, palfrom in spr_want:
         for idx, i in local.items():
             r, g, b = PALRGB[idx]; r5, g5, b5 = r >> 3, g >> 3, b >> 3
             pal16[i] = ((r5 & 1) << 14) | ((g5 & 1) << 13) | ((b5 & 1) << 12) | ((r5 >> 1) << 8) | ((g5 >> 1) << 4) | (b5 >> 1)
-        palslot = spr_nextpal; spr_nextpal += 1
+        if tag in MONSTER_PERMAP:
+            palslot = -1 - len(item_pal16); item_pal16.append(pal16)   # per-map negative marker -> ITEMPAL16 (like items); draw adds g_itembase
+        else:
+            palslot = spr_nextpal; spr_nextpal += 1
         spr_paldb[tag] = (local, remap, pal16, palslot)
     wp = ((w + 15) // 16) * 16; hp = ((h + 15) // 16) * 16
     px = bytearray(wp * hp)                                  # index 0 = transparent (around the sprite)
@@ -1205,7 +1224,7 @@ sprmeta.append(("HEDGER", sprbase, 1, 2, 16, 32, 0, 0, _p16, _ps)); sprbase += l
 item_want = [("ARM1","ARM1A0"),("ARM2","ARM2A0"),("BON2","BON2A0"),      # armour: green, blue, helmet bonus
              ("CLIP","CLIPA0"),("AMMO","AMMOA0"),("SHEL","SHELA0"),("SBOX","SBOXA0"),  # bullets, shells
              ("ROCK","ROCKA0"),("BROK","BROKA0")]          # rockets (CELL/CELP omitted: not in shareware doom1.wad -- no plasma/BFG ammo in E1)
-item_pal16 = []
+# item_pal16 already defined above (holds the per-map MONSTER pals SARG/BOSS first); items append AFTER them so SPR_x_PAL indices stay contiguous (monsters 0..,  items continue)
 for tag, lname in item_want:
     try: pb = glump(lname)
     except Exception: print("  item %s (%s) not found, skipping" % (tag, lname)); continue

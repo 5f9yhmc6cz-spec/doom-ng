@@ -69,9 +69,11 @@ NFLAT = len(ordered); SKY = "F_SKY1"
 base = [-1] * NFLAT; na_a = [0] * NFLAT; nph_a = [0] * NFLAT; pal_a = [[0] * 16 for _ in range(NFLAT)]
 parts = []; off = 0                                  # parts = (c1path,c2path) per baked flat, in slot order
 ttenv = dict(os.environ); ttenv["PATH"] = _BREWPY + ttenv.get("PATH", "")
+NOLUT = os.environ.get("VSFLAT_NOLUT", "") not in ("", "0")   # uber-36: skip the REAL-flat LUT bake -> base[]=-1 so nflat=0 at runtime + 0-byte vsflat.c1/c2. Frees the per-map flat palette slots for the fog bands (g_generic=1 already draws the SYNTHETIC vsfloor/vsceil LUT, never these). Self-check above still runs (order derivation). Re-enable: drop VSFLAT_NOLUT + set gen=0 (param 5).
 for slot, name in enumerate(ordered):
     if name == SKY:                                  # sky: no floor LUT (cart leaves backdrop), base stays -1
         continue
+    if NOLUT: continue                               # uber-36 (VSFLAT_NOLUT): base stays -1, no tiletool, no tiles emitted for this flat
     na, nph = tier(name)
     env = dict(os.environ)
     env.update(FLAT=str(WALLCOUNT + slot), FLNA=str(na), FLNPHASE=str(nph), FLNAL=str(4 * na),

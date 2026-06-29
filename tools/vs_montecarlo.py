@@ -4,12 +4,12 @@
 The live VSLICE cost is dominated by the BSP walk + projection (pj ~63%) which scales with the
 number of segs WALKED/visible from the camera, plus the actor pass (things near + in frustum).
 This samples many random camera views per map, counts the visible-seg + nearby-thing load under
-the player's dd/frustum, and ranks the maps -- a relative predictor of which levels chug.
+the player's dd/frustum, and ranks the maps -- a relative predictor of which levels are slow.
 
 It is a PROXY: it counts segs within the draw-distance + a 90deg frustum but does NOT model portal
 occlusion (so it over-counts in cell-y maps); good for RANKING, calibrated against on-device truth.
 
-Optimizations folded in:
+Recent optimizations are folded in:
   - vprj (per-vertex projection cache): ~halves the per-seg rotation MULs on shared subsector verts.
   - actor occlusion pre-cull: behind-wall / off-screen actors skip atan2 + vs_billboard + a slot.
 
@@ -19,7 +19,7 @@ import struct, sys, os, math, random
 
 WAD = "doom.wad"
 SAMPLES = 600
-DD = 1000          # draw-distance horizon (the smooth preset dd=1000)
+DD = 1000          # draw-distance horizon (smooth preset dd=1000)
 FOV = math.radians(90)   # VS_FOCAL=160 over a 320 view => ~90deg horizontal
 args = sys.argv[1:]
 i = 0
@@ -129,7 +129,7 @@ for ep, en in EPS:
 
 # calibrate the CHUG threshold against on-device truth, then label
 loads = sorted(r["load_after"] for r in rows)
-# ground truth: some maps chug, most are smooth. Flag the top ~quartile as CHUG risk.
+# Ground truth: some maps are slow, most are smooth. Flag the top ~quartile as CHUG risk.
 chug_thr = loads[int(0.78*len(loads))] if loads else 1e9
 silk_thr = loads[int(0.40*len(loads))] if loads else 0
 def verdict(l):

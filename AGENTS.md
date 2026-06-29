@@ -53,7 +53,7 @@ Texturing: horizontal **wall-U** is perspective-correct (baked per-seg `VEU0`/`V
 yoffsets vanish). Radial cull (`rad`, default off) is the same `g_murk_eff` measured as a euclidean
 radius per column.
 
-## C-ROM tile chain — the main footgun
+## C-ROM tile chain — the main hazard
 
 Tiles are one concatenated chain: `base-logo · logo · textiles · floorlut · sprites · ceillut ·
 ramps · vsfloor · vsceil · vsflat`. Each group's `TILE0` offset is the sum of all preceding

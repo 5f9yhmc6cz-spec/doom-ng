@@ -8,9 +8,9 @@
 #include <string.h>
 #include <math.h>
 
-/* HERO-PATH TARGETS (E1M1 world coords): the demo dolly runs ARMOUR -> spawn -> EXIT.
-   Retargeted from "leftmost/farthest cell" to the real green-armour pickup and the exit switch
-   (the nearest reachable cell to each), so the route ends AT the exit, not in the room above it. */
+/* DEMO-PATH TARGETS (E1M1 world coords): the demo dolly runs ARMOUR -> spawn -> EXIT.
+   Targeted to the green-armour pickup and the exit switch (the nearest reachable cell to
+   each, not "leftmost/farthest cell"), so the route ends AT the exit, not in the room above it. */
 #define ARMOUR_X (-224.0f)
 #define ARMOUR_Y (-3232.0f)
 #define EXIT_X    (2912.0f)
@@ -58,7 +58,7 @@ static void draw_wall(SDL_Surface *fb,const SpriteCmd *c){
     }
 }
 /* floor/ceiling span: per-pixel floor-cast against the plane's world height.
- * (On real hardware this becomes coarse depth-bands; here the ideal is rendered.) */
+ * (On real hardware this becomes coarse depth-bands; here it renders the ideal.) */
 /* F_SKY1 ceiling: a vertical-strip background scrolled by view angle (no perspective,
    no distance fade) -- the one piece that's *more* sprite-hardware-friendly than floors */
 static void draw_sky(SDL_Surface *fb,const SpriteCmd *c,const camera_t *cam){
@@ -438,7 +438,7 @@ static int line_clear(int a,int b,int NX,const unsigned char*reach,const int*clr
     for(;;){ int c=ay*NX+ax; if(!reach[c]||clr[c]<marg) return 0;
         if(ax==bx&&ay==by) return 1; int e2=2*e; if(e2>=dy){e+=dy;ax+=sx;} if(e2<=dx){e+=dx;ay+=sy;} }
 }
-/* STRAIGHTEN the hero path: string-pull it into taut line segments (keeping a clearance margin so it
+/* STRAIGHTEN the demo path: string-pull it into taut line segments (keeping a clearance margin so it
    stays off the walls), then resample at S-unit spacing. Removes the medial-axis "fluting" -> the
    node budget reaches FAR further along the level. Returns the new node count (<= cap). */
 
@@ -459,7 +459,7 @@ static int straighten_path(int R,int S,const unsigned char*reach,float*PX,float*
     int *cell=(int*)malloc((long)(N>0?N:1)*sizeof(int));
     for(int i=0;i<N;i++){ int ix=(int)((PX[i]-minx)/S), iy=(int)((PY[i]-miny)/S);
         if(ix<0)ix=0; if(iy<0)iy=0; if(ix>=NX)ix=NX-1; if(iy>=NY)iy=NY-1; cell[i]=iy*NX+ix; }
-    int MARG=4; static int keep[4096]; int kn=0; if(N>0) keep[kn++]=cell[0];   /* string-pull: taut waypoints, >=4 cells (~96u) off walls (keeps the route well clear of the wall) */
+    int MARG=4; static int keep[4096]; int kn=0; if(N>0) keep[kn++]=cell[0];   /* string-pull: taut waypoints, >=4 cells (~96u) off walls */
     for(int i=0;i<N-1 && kn<4096;){ int best=i+1;
         for(int j=i+2;j<N;j++){ if(line_clear(cell[i],cell[j],NX,reach,clr,MARG)) best=j; else break; }
         keep[kn++]=cell[best]; i=best; }
@@ -472,7 +472,7 @@ static int straighten_path(int R,int S,const unsigned char*reach,float*PX,float*
             need-=(seg-pos); px=wx; py=wy; } }
     /* LATERAL CENTRING + MIN-CLEARANCE: in a tight corridor (both walls <300u) ride the midpoint;
        otherwise (one wall close, one open -- e.g. the spawn area) just push off the near wall to a
-       minimum clearance so the dolly never sandpapers a wall. Covers the ENDPOINTS too (i=0,M-1) so
+       minimum clearance so the dolly never scrapes a wall. Covers the ENDPOINTS too (i=0,M-1) so
        the Laplacian can't drag the start back onto the spawn wall. */
     const int MINCLR=128;   /* open areas: ride at least 128u off the near wall (was 88 -- still read as wall-hugging) */
     static float shv[4096], pxv[4096], pyv[4096];
@@ -499,7 +499,7 @@ static int straighten_path(int R,int S,const unsigned char*reach,float*PX,float*
         int ix=(int)((nx-minx)/S),iy=(int)((ny-miny)/S);
         if(ix>=0&&iy>=0&&ix<NX&&iy<NY&&reach[iy*NX+ix]){ PX[i]=nx; PY[i]=ny; }   /* only if still navigable */
     }
-    for(int pass=0;pass<0;pass++) for(int i=1;i<M-1;i++){   /* HARD JUMP TURNS: NO corner rounding. A curve drifts the heading across 15-degree bin boundaries -- every node on it is a full 15-degree view cut (zero signature hits, full rebuilds, each view unlike the previous). Straight runs hold ONE bin (high signature reuse, a smooth tunnel); a sharp corner is ONE decisive cut, like a camera change. The discrete-view engine is piecewise-linear by nature -- the path must be too. */
+    for(int pass=0;pass<0;pass++) for(int i=1;i<M-1;i++){   /* HARD JUMP TURNS: no corner rounding. A curve drifts the heading across 15-degree bin boundaries -- every node on it is a full 15-degree view cut (zero signature hits, full rebuilds, each frame unrelated to the previous). Straight runs hold ONE bin (maximal signature reuse, a smooth tunnel); a sharp corner is ONE discrete cut, like a camera change. The discrete-view engine is piecewise-linear by nature, so the path is too. */
         float nx=0.5f*PX[i]+0.25f*(PX[i-1]+PX[i+1]), ny=0.5f*PY[i]+0.25f*(PY[i-1]+PY[i+1]);
         int ix=(int)((nx-minx)/S),iy=(int)((ny-miny)/S);
         if(ix>=0&&iy>=0&&ix<NX&&iy<NY&&reach[iy*NX+ix]){ PX[i]=nx; PY[i]=ny; } }
@@ -540,7 +540,7 @@ int main(int argc,char**argv){
         SDL_Quit(); return 0;
     }
 
-    if(mapdump){                                /* top-down debug map: geometry + navigable area + hero path */
+    if(mapdump){                                /* top-down debug map: geometry + navigable area + demo path */
         int BIG=1<<28, minx=BIG,miny=BIG,maxx=-BIG,maxy=-BIG;
         for(int i=0;i<lv->nverts;i++){ int vx=(int)lv->verts[i].x,vy=(int)lv->verts[i].y;
             if(vx<minx)minx=vx; if(vx>maxx)maxx=vx; if(vy<miny)miny=vy; if(vy>maxy)maxy=vy; }
@@ -571,7 +571,7 @@ int main(int argc,char**argv){
             if(rs<0||ls<0) col=0xFFE6E6E6;
             else { float df=lv->sectors[rs].floor-lv->sectors[ls].floor; if(df<0)df=-df; col=(df>1.0f)?0xFFFF8C28:0xFF50506E; }
             mline(m,WX2I(a.x),WY2I(a.y),WX2I(b.x),WY2I(b.y),col); }
-        /* hero path = armour-room(left) -> spawn -> far(exit): a left-to-right traverse through spawn.
+        /* demo path = armour-room(left) -> spawn -> far(exit): a left-to-right traverse through spawn.
            CENTRE it (identical to the bake), then draw. */
         int chain[4096], cn=0;
         int leftc=-1,farc=-1; { float bl=1e18f,bf=1e18f;   /* path ends = nearest reachable cell to ARMOUR / EXIT (not leftmost/farthest) */
@@ -653,10 +653,10 @@ int main(int argc,char**argv){
         else fprintf(stderr,"PROBE (%.0f,%.0f): no sector\n",px2,py2); } }
     if(bakecR){                                 /* PoC: bake a spawn-cluster sub-grid as a C header */
         PCFG.far=getenv("NODE_FAR")?atof(getenv("NODE_FAR")):4000.0f; PCFG.fov=160.0f; dng_flats=1; PCFG.max_band=32;   /* draw distance for the baked views (NODE_FAR overrides). 4000 = full E1M1 extent (saturates: 4000==5000); measured cost is only 72 cmds/view, 66/96 sprites/scanline. Was 1000 -- the cart saw a fraction of the tuner. WIDE trapezoid segments: runtime interpolates the slope. */
-        int S=bakecS>0?bakecS:24, NA=24;   /* EMPIRICAL DENSITY TRADE: 24 angles (15deg bins) buys ~2x node density at the same 8MB -- forward cadence halves, which is the common case. LUTs rebaked at 24 to stay bin-coherent. */              /* ON-RAILS: 45 angles (8deg/turn; was 30) -- the perf rework + C-ROM reclaim paid for the finer angular snap (smoother turning, less view-pop). Matches the floor/ceiling LUTs 1:1 (ai->fai). P2 ~7MB = the 7-bank ceiling. */
+        int S=bakecS>0?bakecS:24, NA=24;   /* EMPIRICAL DENSITY TRADE: 24 angles (15deg bins) buys ~2x node density at the same 8MB -- forward cadence halves, which is where the demo lives. LUTs rebaked at 24 to stay bin-coherent. */              /* ON-RAILS: 45 angles (8deg/turn; was 30) -- the perf rework + C-ROM reclaim paid for the finer angular snap (smoother turning, less view-pop). Matches the floor/ceiling LUTs 1:1 (ai->fai). P2 ~7MB = the 7-bank ceiling. */
         int R=bakecR>0?bakecR:1300;
         int minx=(int)MAP_START.pos.x-R, miny=(int)MAP_START.pos.y-R, NX=2*R/S+1, NY=2*R/S+1, NC=NX*NY;
-        /* BFS-flood the navigable space from spawn, recording each cell's parent to allow back-tracing a route. */
+        /* BFS-flood the navigable space from spawn, recording each cell's parent to back-trace a route. */
         unsigned char *reach=(unsigned char*)calloc(NC,1); int *qq=(int*)malloc((long)NC*4),qh=0,qt=0; int *par=(int*)malloc((long)NC*4);
         int sc=(R/S)*NX+(R/S); reach[sc]=1; par[sc]=-1; qq[qt++]=sc;
         int dx4[4]={1,-1,0,0},dy4[4]={0,0,1,-1};
@@ -672,7 +672,7 @@ int main(int argc,char**argv){
                                                              pit as wall and the centring shift-field hugs the BRIDGE CENTRE through the zigs. */
                     if(nsec2>=0 && lv->sectors[nsec2].floortex==48) continue;
                     reach[nc]=1;par[nc]=c;qq[qt++]=nc; } } }
-        /* HERO PATH = armour -> spawn -> exit: back-trace the nearest-reachable cell to the green
+        /* DEMO PATH = armour -> spawn -> exit: back-trace the nearest-reachable cell to the green
            armour AND to the exit switch, joined at spawn (a left-to-right traverse through the start). */
         static float PX[2048],PY[2048]; int PATH_N=0;
         int leftc=-1,farc=-1; { float bl=1e18f,bf=1e18f;
@@ -687,7 +687,7 @@ int main(int argc,char**argv){
         { int chain[4096],cn=0;
           for(int c=leftc;c>=0&&cn<4096;c=par[c]) chain[cn++]=c;                                                    /* armour(left) -> spawn, forward */
           for(int k=0;k<cn&&PATH_N<2048;k++){ int c=chain[k],ix=c%NX,iy=c/NX; PX[PATH_N]=minx+ix*S+S*0.5f; PY[PATH_N]=miny+iy*S+S*0.5f; PATH_N++; }
-          /* ZIGZAG-BRIDGE WAYPOINTS: by design the dolly RIDES the iconic S of the nukage bridge,
+          /* ZIGZAG-BRIDGE WAYPOINTS: the dolly should RIDE the S of the nukage bridge,
              not bisect it. Derive the bridge centreline from data: per-row centroid of walkable
              cells inside the bridge bbox (the pits are nukage = !reach, so centroids trace the
              walkway), sampled every ~6 rows. The rail is then CHAINED spawn -> centreline -> exit
@@ -806,7 +806,7 @@ int main(int argc,char**argv){
                    ceiling there was ~20 wasted sprites/exterior. Mixed columns (ceiling above a low sky band)
                    stay unflagged so their LUT ceiling still draws. */
                 /* BRIGHT-FIXTURE CEILING predicate, shared by the skytop skip / keep filter / priority
-                   pass so they can never disagree. Two constraints baked in:
+                   pass so they can never disagree. Two hard lessons baked in:
                    - LAMP FLATS ONLY (TLITE6_x, tex 50-53): ANY bright ceiling used to qualify, so a lit
                      grey ceiling near the exit emitted a banded grey slab that punched a hole in the
                      red-lamp band of the END-OF-RAIL parked view (truncated lamps mid-pixel on the tile
@@ -851,8 +851,8 @@ int main(int argc,char**argv){
                    under the budget = ALL walls kept (full long draw distance). Only the ~10 densest views
                    (node 131 etc. = 120 wall strips, crawled) get trimmed, and the FARTHEST wall-chunks drop
                    first (deep background; near walls always kept). Tunable. NOT the blanket dep-ramp cull. */
-                int WALL_STRIP_BUDGET = getenv("MAXQ")?9999:88;   /* MAXQ=1: REFERENCE BAKE -- every compromise off (maximum possible quality build, to be gracefully degraded from there) */
-                #define WALL_STRIP_BUDGET_DOC 88    /* commit-fits-vblank budget: WALL+FLAT+THING <= 144 keeps the far rewrite ~1 vblank, so dense-room commits stop costing 7 refreshes (the 8fps holes). clean is preferred over dense. */   /* raised from 80: the view-cache + de-divisioned emit + imp-scan fix transformed the 68k budget; the old cap was cutting the upper-wall bands in dense rooms (the "missing coverage" glitches, e.g. node 28). Scanline peak verified < 96 after the raise. */
+                int WALL_STRIP_BUDGET = getenv("MAXQ")?9999:88;   /* MAXQ=1: REFERENCE BAKE -- every compromise off (maximum-quality build, to be degraded gracefully from there) */
+                #define WALL_STRIP_BUDGET_DOC 88    /* commit-fits-vblank budget: WALL+FLAT+THING <= 144 keeps the far rewrite ~1 vblank, so dense-room commits stop costing 7 refreshes (the 8fps holes). By design, clean over dense. */   /* raised from 80: the view-cache + de-divisioned emit + imp-scan fix transformed the 68k budget; the old cap was cutting the upper-wall bands in dense rooms (the "missing coverage" glitches, e.g. node 28). Scanline peak verified < 96 after the raise. */
                 { static int wford[1024]; int wn=0;
                   for(int j=0;j<dl.n&&wn<1024;j++){ const SpriteCmd*c=&dl.cmd[j]; if(c->kind==SC_WALL&&c->w>0&&c->h>0) wford[wn++]=j; }
                   for(int a2=1;a2<wn;a2++){ int v=wford[a2],dv=dl.cmd[v].depth,b2=a2-1; while(b2>=0&&dl.cmd[wford[b2]].depth>dv){wford[b2+1]=wford[b2];b2--;} wford[b2+1]=v; }  /* NEAREST first */
@@ -1018,7 +1018,7 @@ int main(int argc,char**argv){
            bank-aligned blob) -> __bank/.text2 -> banked P2, mapped 1MB at a time @0x200000. */
         FILE*f=fopen("neogeo/nodes_data.h","w");
         fprintf(f,"/* PoC node-render data (spawn cluster, generated) -- decls only */\n");
-        fprintf(f,"#define NODE_NA %d\n#define PATH_N %d\n#define START_NODE %d\n",NA,PATH_N,START_NODE);   /* on-rails: hero-path nodes x NA angles; START_NODE = spawn (dolly's initial pt) */
+        fprintf(f,"#define NODE_NA %d\n#define PATH_N %d\n#define START_NODE %d\n",NA,PATH_N,START_NODE);   /* on-rails: demo-path nodes x NA angles; START_NODE = spawn (dolly's initial pt) */
         fprintf(f,"#define NODEIDX_COUNT %ld\n#define NODE_NBANK %ld\n",ICOUNT,NBANK);
         fprintf(f,"extern const int NODEIDX[NODEIDX_COUNT];\n");          /* byte offset of each (node*NA+angle) draw-list */
         fprintf(f,"extern const short PATHX[PATH_N], PATHY[PATH_N];\n");  /* world XY of each path node (imp projection / floor phase) */
@@ -1040,8 +1040,8 @@ int main(int argc,char**argv){
              micro-shifts as +-5-10 degrees of noise, so any segment near a 15-degree boundary
              flapped bins EVERY NODE despite the hysteresis: the bake measured 438 bin changes
              over 1146 nodes, median run length ONE. Every flap is a full view rebuild with zero
-             signature hits (each view unlike the previous; the one 105-node run
-             was the smooth tunnel). Tangents over +-4 nodes (~200u) average the noise out;
+             signature hits -- "each shot nothing like the previous" (the one 105-node run
+             was a glass-smooth tunnel). Tangents over +-4 nodes (~200u) average the noise out;
              min-run enforcement then guarantees a bin change can only survive at a real corner. */
           static unsigned char binv[2048];
           for(int p=0;p<PATH_N;p++){
@@ -1245,15 +1245,15 @@ int main(int argc,char**argv){
            (vs the 4 runtime palette banks). clfade = darkening per unit relative-depth; clminb = darkest.
            Env-tunable (CLFADE/CLMINB) for the ride. g_ceildark is dead in the live engine so the ramp
            palette can own bank 12 outright. */
-        float chr=1.f,chg=1.f,chb=1.f, clfade=0.18f, clminb=0.38f, clpitch=1.f;   /* clpitch>1 = tighter texture pitch (denser pattern) without changing the ceiling height/relz. Ship value 1.66. */
+        float chr=1.f,chg=1.f,chb=1.f, clminb=0.38f, clpitch=1.f, clvis=112.f;   /* clpitch>1 = tighter texture pitch (denser pattern). Shipped value 1.66. clvis = the ceiling's screen-row extent (112px = 7 rows) = the SCREEN-LINEAR fade denominator (replaces the perspective clfade, which plateaued the near/overhead field -- the "grey band at the front"). */
         if(clvs){ long sr=0,sg=0,sb=0; long npx=(long)fw*fh; for(long i=0;i<npx;i++){ SDL_Color c=PAL[t.pix[i]]; sr+=c.r;sg+=c.g;sb+=c.b; }
             float mr=(float)sr/npx,mg=(float)sg/npx,mb=(float)sb/npx, ml=0.299f*mr+0.587f*mg+0.114f*mb; if(ml<1.f)ml=1.f; chr=mr/ml;chg=mg/ml;chb=mb/ml;
-            if(getenv("CLFADE"))clfade=(float)atof(getenv("CLFADE")); if(getenv("CLMINB"))clminb=(float)atof(getenv("CLMINB")); if(getenv("CLPITCH"))clpitch=(float)atof(getenv("CLPITCH")); }
+            if(getenv("CLVIS"))clvis=(float)atof(getenv("CLVIS")); if(getenv("CLMINB"))clminb=(float)atof(getenv("CLMINB")); if(getenv("CLPITCH"))clpitch=(float)atof(getenv("CLPITCH")); }
         for(int A=0;A<NA;A++){ angle_t ang=(angle_t)(A*256/NAL); float co=lut_cos(ang), si=lut_sin(ang);
             for(int p=0;p<NPHL;p++){
                 float px0=MAP_START.pos.x+p*(L==2?32:16)*co, py0=MAP_START.pos.y+p*(L==2?32:16)*si, relz=(getenv("CLRELZ")?(float)atof(getenv("CLRELZ")):41.0f);   /* ceiling height above eye; CLRELZ env tunes it. A/B: 4 x 16u; C: 2 x 32u */
                 for(int yy=0;yy<H;yy++){ float dy=(float)yy; if(dy<0.5f)dy=0.5f; float D=relz*PCFG.fov/dy, fwx=px0+D*co, fwy=py0+D*si, rt=D/PCFG.fov;
-                    float b=1.f; if(clvs){ b=1.f-(112.f/dy-1.f)*clfade; if(b<clminb)b=clminb; if(b>1.f)b=1.f; }   /* 112/dy = perspective depth ratio (1=near .. large=horizon) -> b fades far rows dark */
+                    float b=1.f; if(clvs){ b=clminb+(1.f-clminb)*(dy>=clvis?1.f:dy/clvis); }   /* SCREEN-LINEAR fade (mirrors the floor, host:1189): near/overhead (large dy) = 1.0 light, horizon (dy->0) = clminb dark -> an EVEN gradient across all 7 rows. The old 112/dy perspective ratio was ~flat for large dy = the grey plateau on the front/overhead rows. */
                     for(int x=0;x<W;x++){ float off=(x-160)*rt; int U=imod((int)floorf((fwx+off*si)*clpitch),fw), V=imod((int)floorf((fwy-off*co)*clpitch),fh);   /* CLPITCH scales the texture sampling -> denser pattern (tighter pitch), same height */
                         if(clvs){ SDL_Color c=PAL[t.pix[V*fw+U]]; float lum=0.299f*c.r+0.587f*c.g+0.114f*c.b; int Lv=(int)(lum*b*15.f/256.f); if(Lv<0)Lv=0; if(Lv>14)Lv=14; buf[(((long)(A*NPHL+p)*H)+yy)*W+x]=(unsigned char)(Lv+1); }   /* texel luminance (panel pattern) x depth fade -> ramp level 1..15 */
                         else buf[(((long)(A*NPHL+p)*H)+yy)*W+x]=(unsigned char)remap[t.pix[V*fw+U]]; } } } }

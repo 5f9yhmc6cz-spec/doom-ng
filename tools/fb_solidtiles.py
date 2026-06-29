@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """FB SPIKE baker: 15 SOLID 8x8 fix tiles + the global palette, emitted for the cart.
 
-Neo Geo gotcha: palette index 0 is HW-transparent on the fix layer (the gun relies on it).
+Neo Geo constraint: palette index 0 is HW-transparent on the fix layer (the gun relies on it).
 So the framebuffer packs the 128-colour global palette as 15 colours/group at indices 1..15
 (index 0 unused) across 8 fix palette slots -> needs 15 solid tiles, tile j = uniform index j+1.
 A solid tile is swizzle-independent: every one of its 32 bytes = (i | (i<<4)).

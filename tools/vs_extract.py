@@ -124,22 +124,25 @@ def extract_map(MAP):
         ss=n & 0x7fff
         return segs[ssecs[ss][1]][4] if ssecs[ss][0]>0 else 0   # front floor height of the subsector's first seg
     # THINGS for the live engine. THING_CLASS = single source of truth (also emits CLS_* + SPRCLASS order).
-    # S2 keeps only BARRELS (2035). Filter: single-player (NOT flag 0x10) present on UV (flag 0x04).
+    # S2 keeps only BARRELS (2035). Filter: single-player (NOT flag 0x10) present on UV (flag 0x04) -- by design.
     things=[]
     for t in range(TH[1]//10):
         tx,ty,ta,typ,fl=struct.unpack_from("<hhhhh",data,TH[0]+t*10)
         cls=THING_CLASS.get(typ)
         if cls is None: continue
-        if (fl & 0x10) or not (fl & 0x04): continue        # drop multiplayer-only; keep UV/single-player
+        if (fl & 0x10) or not (fl & 0x04): continue        # drop multiplayer-only; keep UV/single-player (by design)
         things.append((tx,ty,(ta*256//360)&0xff,floor_z(tx,ty),cls))
     return dict(segs=segs,ssecs=ssecs,nodes=nodes,rbb=rbb,lbb=lbb,root=root,sx=sx,sy=sy,sa=sa,things=things,nsec=len(sectors))
 
 # THING type -> class enum (single source of truth, emitted as CLS_* into vs_e1.h). S2 = barrels only;
 # monsters/items get added in later milestones (M3/M5/L1) -- the cart's SPRCLASS[] table indexes this.
 THING_CLASS={2035:0, 3001:1, 3004:2, 9:3,                 # barrel, imp, former-human(zombie), shotgun-guy(sergeant)
-             2018:4, 2019:5, 2015:6,                       # ARMOUR: green(ARM1), blue(ARM2), helmet bonus(BON2)
-             2007:7, 2048:8, 2008:9, 2049:10,              # AMMO: clip, bullet box, shells, shell box
-             2010:11, 2046:12}                             # AMMO: rocket, rocket box
+             3002:4, 3003:5,                               # MONSTERS: Pinky/Demon(SARG), Baron of Hell(BOSS)
+             3005:6, 3006:7, 16:8, 7:9,                    # Cacodemon(HEAD), Lost Soul(SKUL), Cyberdemon(CYBR), Spider Mastermind(SPID)
+             58:4,                                         # Spectre -> SARG class (renders as a Pinky for v1; fuzz shimmer deferred)
+             2018:10, 2019:11, 2015:12,                    # ARMOUR: green(ARM1), blue(ARM2), helmet bonus(BON2)
+             2007:13, 2048:14, 2008:15, 2049:16,           # AMMO: clip, bullet box, shells, shell box
+             2010:17, 2046:18}                             # AMMO: rocket, rocket box
                                                             # classes 4..12 = "visible billboard" items (drawn, not collectible) -- see SPRCLASS in main.c.
                                                             # (CELL 2047 / CELP 17 omitted: no plasma/BFG ammo sprites in shareware doom1.wad)
 DOORSP={1,26,27,28,31,32,33,34,117,118}      # DOOR linedef specials (manual/keyed/fast); used to flag openable segs
@@ -148,6 +151,7 @@ LIFTSP={10,21,62,88,120,121,122,123,18,22,69,95,119,128}   # LIFT + raise-floor 
 WALKDOOR={2,4,86,90,105,106,108,109}                       # WALK-trigger OPEN-door specials (W1/WR) -> crossing the line raises the TAG-resolved door sector (open-stay)
 SWDOOR={29,61,63,103,111,112,114,115}                      # SWITCH-trigger OPEN-door specials (S1/SR) -> USE the switch raises the TAG-resolved door sector (open-stay)
 CLASS_NAMES=["CLS_BAR","CLS_IMP","CLS_POSS","CLS_SPOS",
+             "CLS_SARG","CLS_BOSS","CLS_HEAD","CLS_SKUL","CLS_CYBR","CLS_SPID",   # full bestiary (items shift to 10..18; CLS_ITEM0 in main.c must track = 10)
              "CLS_ARM1","CLS_ARM2","CLS_BON2",
              "CLS_CLIP","CLS_AMMO","CLS_SHEL","CLS_SBOX",
              "CLS_ROCK","CLS_BROK"]

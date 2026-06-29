@@ -2,7 +2,7 @@
 ;;
 ;; ADPCM-B (set A, ports 4/5): "At Doom's Gate", looped forever in hardware.
 ;; ADPCM-A (set B, ports 6/7): one-shot SFX (pistol fire, imp death) fired on a
-;; 68k sound command. The 68k writes a command byte -> our NMI stashes it ->
+;; 68k sound command. The 68k writes a command byte -> the NMI stashes it ->
 ;; the idle loop programs ADPCM-A channel 1 and keys it on. The music keeps
 ;; looping on its own channel, undisturbed.
 ;;

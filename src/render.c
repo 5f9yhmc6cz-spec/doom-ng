@@ -1,5 +1,5 @@
 /* render.c -- BSP renderer. The math path uses `real` (float by default, 16.16
- * under -DUSE_FIXED=1) to allow A/B-verifying the fixed-point port against float.
+ * under -DUSE_FIXED=1) so the fixed-point port can be A/B-verified against float.
  * Collision/doors/hitscan stay float (they don't affect the rendered frame). */
 #include "dng.h"
 #include "fixed.h"
@@ -24,7 +24,7 @@ static int clampi(int v,int lo,int hi){ return v<lo?lo:(v>hi?hi:v); }
 
 /* ---- fixed scratch: verts converted ONCE (world_init), camera+sectors ONCE per
  * frame (render_world). The hot path reads these and never calls rf()/rtof(), so
- * there is no soft-float on the 68000 -- the 0.2fps cause. ---- */
+ * there is no soft-float on the 68000 -- that was the 0.2fps killer. ---- */
 #define MAXVERT 700
 #define MAXNODE 400
 #define MAXSEG  1024
@@ -147,7 +147,7 @@ static void render_seg(int segidx){
     /* (per-band edge slopes are computed in the band loop now; the whole-seg slope is no longer used) */
     /* Band width is NO LONGER throttled by the silhouette slope: the runtime now interpolates
        each 16px chunk's top/height along (dtop,dbot), so a wide band tracks a steep edge exactly.
-       Throttling by slope was counterproductive -- it starved the steepest walls of the
+       Throttling by slope did the opposite of the intent -- it starved the steepest walls of the
        multi-chunk width their slope needs to show. Go full width; only the texture u-warp would
        argue for narrower, and that's deferred. (Bonus: fewer records -> smaller blob.) */
     int bw=PCFG.max_band;
