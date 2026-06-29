@@ -89,7 +89,17 @@ pn = glump("PNAMES"); npn = struct.unpack_from("<I", pn, 0)[0]
 pnames = [nm(pn[4 + i * 8: 12 + i * 8]) for i in range(npn)]
 t1 = glump("TEXTURE1"); ntx = struct.unpack_from("<I", t1, 0)[0]
 toffs = struct.unpack_from("<%di" % ntx, t1, 4)
-tex1_off = {nm(t1[toffs[i]: toffs[i] + 8]): toffs[i] for i in range(ntx)}
+tex1_off = {nm(t1[toffs[i]: toffs[i] + 8]): (t1, toffs[i]) for i in range(ntx)}   # name -> (lump, offset)
+# TEXTURE2 (registered/Ultimate DOOM: E2-E4's marble/skin/wood/gstone textures live HERE). Without it
+# every TEXTURE2 wall is dropped from the bake AND every texid past the first one shifts vs vs_extract's
+# full 245-wall enumerate -> mangled texture palettes even on E1M1. TEXTURE1 wins on dup names (DOOM rule).
+try:
+    t2 = glump("TEXTURE2"); ntx2 = struct.unpack_from("<I", t2, 0)[0]
+    toffs2 = struct.unpack_from("<%di" % ntx2, t2, 4)
+    for i in range(ntx2):
+        tex1_off.setdefault(nm(t2[toffs2[i]: toffs2[i] + 8]), (t2, toffs2[i]))
+except Exception:
+    pass   # shareware doom1.wad has no TEXTURE2 -- E1-only build, unchanged
 
 
 def parse_patch(b):
@@ -111,12 +121,12 @@ def parse_patch(b):
     return w, h, lo, to, grid
 
 
-def build_texture(o):
-    masked, w, h, coldir, pc = struct.unpack_from("<ihhiH", t1, o + 8)
+def build_texture(lump, o):
+    masked, w, h, coldir, pc = struct.unpack_from("<ihhiH", lump, o + 8)
     grid = [[-1] * w for _ in range(h)]
     po = o + 22
     for p in range(pc):
-        ox, oy, pat, sd, cm = struct.unpack_from("<hhhhh", t1, po); po += 10
+        ox, oy, pat, sd, cm = struct.unpack_from("<hhhhh", lump, po); po += 10
         pw, ph, plo, pto, pg = parse_patch(glump(pnames[pat]))
         for cx in range(pw):
             tx = ox + cx
@@ -136,7 +146,7 @@ WALLS_E1, FLATS_E1, _ = e1_assets(WAD)
 texlist = []; texid = {}
 for name in WALLS_E1:
     if name in tex1_off:
-        w, h, grid = build_texture(tex1_off[name])
+        w, h, grid = build_texture(*tex1_off[name])
         texid[name] = len(texlist); texlist.append((w, h, grid, 0))
 
 
@@ -165,7 +175,7 @@ def fid(name):
 # flagged with ceiltex = -2 so the backend scrolls the sky instead of floor-casting.
 SKY_TEX = -1
 if "SKY1" in tex1_off:
-    skw, skh, skg = build_texture(tex1_off["SKY1"])
+    skw, skh, skg = build_texture(*tex1_off["SKY1"])
     SKY_TEX = len(texlist); texlist.append((skw, skh, skg, 0))
 
 sec_out = [(fl, ce, li, fid(ff), -2 if cf == "F_SKY1" else fid(cf))
@@ -656,6 +666,81 @@ if "--ramps" in sys.argv:
         subprocess.run([_TILETOOL, "--sprite", "-c", gifp, "-o", c1p, c2p], check=True, env=_ttenv)
         c1d = open(c1p, 'rb').read(); c2d = open(c2p, 'rb').read()
         ramp_c1 += c1d; ramp_c2 += c2d; base += len(c1d) // 64
+    # === OPAQUE-CORNER cap OVERLAY wedges (NEW cap mode TB32o) ================================
+    # The in-strip caps bevel a sloped edge by baking the corner PAST the diagonal as index 0
+    # (HARDWARE-TRANSPARENT) -> the floor/ceiling LUT shows through, but the LUT is on a 16px
+    # grid that can't follow the diagonal -> a stepped "picket fence" seam. The OPAQUE-CORNER
+    # mode leaves the wall strip plain (no in-strip caps) and instead lays a SEPARATE overlay
+    # sprite over the wall's top/bottom corner: the overlay is SOLID (index 1) ABOVE the
+    # diagonal and TRANSPARENT (index 0) below it -- the exact INVERSE of the in-strip cap.
+    # Drawn with a cap palette whose index 1 = the mean ceiling colour (top) / floor colour
+    # (bottom), the solid wedge MERGES with the ceiling/floor so the wall silhouette reads as a
+    # clean diagonal with nothing showing through.  PER-SLOPE only (16px-wide; the mask repeats
+    # every 16px -> reused for every tcol; texture-INdependent; no NSHIFT phases -- the solid/
+    # transparent mask does not depend on the wall's horizontal U-shift). Same -|d| canonical
+    # baking + flip derivation as the in-strip caps (top(-d)=00, top(+d)=H, bottom(+d)=V,
+    # bottom(-d)=HV), so the cart reuses rtfl/rbfl verbatim. Appended AFTER the ramps + before
+    # the AVG mip -> the AVG/TITLE/MENU TILE0s (which sum 'base'/'abase') re-anchor on re-bake.
+    RAMP_OVL_TILE0 = RAMP_TILE0 + base
+    ramp_ovl_off = [-1]*RAMP_NDROP            # overlay tile-offset (from RAMP_OVL_TILE0) per quantized slope; -1 = none
+    ovl_base = 0
+    ovl_slopes = sorted({ -abs(d) for (t, d, e) in combos })   # canonical negative |d| (combos already canonicalized to (-|d|,0))
+    ovl_c1 = b""; ovl_c2 = b""
+    for d in ovl_slopes:                       # d<=0; bake the NEGATIVE-slope TOP wedge, cart flips for +d / bottom
+        ad = abs(d); nt = max(1, (ad+15)//16)  # stack height: 1 tile per 16px of drop (matches the cap stack)
+        sheet = bytearray(16 * nt * 16)        # nt stacked 16x16 tiles (k=0 nearest the corner)
+        for k in range(nt):
+            for y in range(16):
+                for x in range(16):
+                    xi = x & 15
+                    el = (ad*(15-xi))//15 - k*16   # d<0 branch of the cap's top 'el'; SOLID where the cap is TRANSPARENT (y<el)
+                    sheet[(k*16 + y)*16 + x] = 1 if y < el else 0
+        ovlpal = [0,0,0, 255,255,255] + [0]*42  # grey index-1 placeholder (recoloured by the cart cap palette at draw)
+        img = Image.frombytes('P', (16, nt*16), bytes(sheet)); img.putpalette(ovlpal)
+        gifp = "%s/rampovl_%d.gif" % (tmpd, ad); img.save(gifp, optimize=False)
+        c1p = "%s/rampovl_%d.c1" % (tmpd, ad); c2p = "%s/rampovl_%d.c2" % (tmpd, ad)
+        subprocess.run([_TILETOOL, "--sprite", "-c", gifp, "-o", c1p, c2p], check=True, env=_ttenv)
+        c1d = open(c1p, 'rb').read(); c2d = open(c2p, 'rb').read()
+        ovl_c1 += c1d; ovl_c2 += c2d
+        ramp_ovl_off[d - RAMP_DMIN] = ovl_base
+        if -d <= RAMP_DMAX: ramp_ovl_off[-d - RAMP_DMIN] = ovl_base   # +d shares the wedge (cart h-flips)
+        ovl_base += len(c1d) // 64
+    ramp_c1 += ovl_c1; ramp_c2 += ovl_c2; base += ovl_base
+    # === cap PALETTES: index 1 = mean CEILING flat colour (top caps) / mean FLOOR flat colour
+    #     (bottom caps). Mean RGB over E1's distinct ceiling/floor flats' raw pixels -> NG RGB444.
+    #     Index 0 stays transparent; indices 2..15 a dark ramp toward index 1 (unused by the wedge
+    #     -- the wedge is index 0/1 only -- but kept sensible). Emitted as CAP_CEIL_PAL/CAP_FLOOR_PAL.
+    _ceil_flats, _floor_flats = set(), set()
+    for (fl, ce, li, ff, cf) in sectors:
+        if ff: _floor_flats.add(ff.upper())
+        if cf and cf != "F_SKY1": _ceil_flats.add(cf.upper())
+    def _mean_flat_rgb(names):
+        rs = gs = bs = n = 0
+        for nm2 in names:
+            fi = flatid.get(nm2, -1)
+            if fi < 0: continue
+            _w, _h, grid, _m = texlist[fi]
+            for row in grid:
+                for idx in row:
+                    if idx < 0: continue
+                    r, g, b = PALRGB[idx]; rs += r; gs += g; bs += b; n += 1
+        if n == 0: return (96, 96, 96)
+        return (rs//n, gs//n, bs//n)
+    def _cap_pal16(rgb):                        # 16-colour NG palette: 0 transparent, 1 = flat colour, 2..15 dark ramp toward it
+        r, g, b = rgb
+        out = [0x8000]                          # index 0: transparent (bit15)
+        def _ng(r2, g2, b2):
+            r5, g5, b5 = r2 >> 3, g2 >> 3, b2 >> 3
+            return ((r5 & 1) << 14) | ((g5 & 1) << 13) | ((b5 & 1) << 12) | ((r5 >> 1) << 8) | ((g5 >> 1) << 4) | (b5 >> 1)
+        out.append(_ng(r, g, b))                # index 1: the representative flat colour (the ONLY one the wedge uses)
+        for i in range(2, 16):                  # 2..15: a dark ramp (sensible filler; unused by the index-0/1 wedge)
+            f = (15 - i) / 13.0
+            out.append(_ng(int(r*f), int(g*f), int(b*f)))
+        return out
+    CAP_CEIL_PAL = _cap_pal16(_mean_flat_rgb(_ceil_flats))
+    CAP_FLOOR_PAL = _cap_pal16(_mean_flat_rgb(_floor_flats))
+    print("cap overlay: OVL_TILE0=%d, %d wedge tiles; ceil=%s floor=%s" % (
+        RAMP_OVL_TILE0, ovl_base, _mean_flat_rgb(_ceil_flats), _mean_flat_rgb(_floor_flats)))
     # === LOD vertical-average mip ============================================================
     # A 1-tile-tall strip per texture where each texel COLUMN is the vertical AVERAGE of that
     # texture column (mean RGB -> nearest palette colour). Distant walls collapse to a single
@@ -702,16 +787,18 @@ if "--ramps" in sys.argv:
     #     image bakes as ONE tiletool pass; the cart applies TITLE_MAP[row][col] palettes at title time and
     #     restores the game palettes after. Appended after the avg-mip -> no downstream base shift. ===
     import numpy as _np
-    TITLE_TILE0 = AVG_TILE0 + abase; TCOLS, TROWS = 20, 14; _tg = None   # TROWS=14 -> 224px: title FILLS the active area (the author); see vertical-stretch resample below
+    TITLE_TILE0 = AVG_TILE0 + abase; TCOLS, TROWS = 20, 14; _tg = None   # TROWS=14 -> 224px active area; the title is baked NATIVE + vertically CENTRED (no stretch) -> letterbox top/bottom (see below)
     try: _tw,_th,_tlo,_tto,_tg = parse_patch(glump("TITLEPIC"))
     except Exception as _e: print("TITLEPIC: not found (%s) -> cart falls back to text title" % _e)
     def _ngc(r,g,b):
         R,G,B=r>>3,g>>3,b>>3; return ((R&1)<<14)|((G&1)<<13)|((B&1)<<12)|((R>>1)<<8)|((G>>1)<<4)|(B>>1)
     if _tg:
         _rgb=_np.zeros((TROWS*16,TCOLS*16,3),dtype=_np.uint8)
-        for _y in range(TROWS*16):                       # vertical STRETCH: resample the ~200px TITLEPIC to fill TROWS*16 (224) px so the logo fills the active area (HW can't magnify at display time). ~1.12x = close to DOOM's 4:3 CRT look.
-            _sy=_y*_th//(TROWS*16)
-            if _sy>=_th: continue
+        _voff=(TROWS*16-_th)//2                          # NATIVE (no vertical stretch), vertically CENTRED -> black letterbox top+bottom (the author 2026-06-23: "uncrop without stretching" -- the ~200px title sits 1:1 in the 224px area with ~12px letterbox each; also drops the palette count well under 248, so no bottom-row merge glitch).
+        if _voff<0: _voff=0
+        for _y in range(TROWS*16):
+            _sy=_y-_voff
+            if _sy<0 or _sy>=_th: continue               # letterbox rows: stay black (index 0)
             for _x in range(min(_tw,TCOLS*16)):
                 _i=_tg[_sy][_x]
                 if _i>=0: _rgb[_y,_x]=PALRGB[_i]
@@ -731,7 +818,7 @@ if "--ramps" in sys.argv:
             for _ty in range(TROWS):
                 for _tx in range(TCOLS): _use[_tmap[_ty][_tx]]+=1
             _ord=sorted(range(len(_pals)), key=lambda p:-_use[p]); _keep=set(_ord[:MAXTPAL])
-            def _pd(a,b): return sum((a[i][0]-b[i][0])**2+(a[i][1]-b[i][1])**2+(a[i][2]-b[i][2])**2 for i in range(15))
+            def _pd(a,b): return sum(min((a[i][0]-b[j][0])**2+(a[i][1]-b[j][1])**2+(a[i][2]-b[j][2])**2 for j in range(15)) for i in range(15))   # SET-based (order-insensitive): score by each colour's NEAREST in b, not slot-by-slot -> the id-logo tile merges into a colour-COMPATIBLE palette (fixes the green-square: slot-aligned scoring picked a palette that couldn't represent the logo's colours)
             def _cm(c,pal):
                 _bi,_bd=0,1<<60
                 for _i,_pc in enumerate(pal):
@@ -782,7 +869,7 @@ if "--ramps" in sys.argv:
     #     transparent sprite tilemaps, ONE 15-colour palette per lump (menu art is simple). Drawn over
     #     black after the title (the title's 242 palettes leave no room to overlay). Appended after
     #     TITLEPIC -> no downstream base shift. Transparent patch pixels (grid==-1) -> tile index 0. ===
-    MENU_LUMPS=["M_EPISOD","M_EPI1","M_EPI2","M_EPI3","M_NEWG","M_SKILL","M_JKILL","M_ROUGH","M_HURT","M_ULTRA","M_NMARE","M_SKULL1","M_SKULL2"]
+    MENU_LUMPS=["M_EPISOD","M_EPI1","M_EPI2","M_EPI3","M_EPI4","M_NEWG","M_SKILL","M_JKILL","M_ROUGH","M_HURT","M_ULTRA","M_NMARE","M_SKULL1","M_SKULL2"]
     MENU_TILE0 = TITLE_TILE0 + TCOLS*TROWS
     m_off=[]; m_cols=[]; m_rows=[]; m_w=[]; m_h=[]; m_pal=[]; m_base=0; m_have=1
     for _nm in MENU_LUMPS:
@@ -822,6 +909,78 @@ if "--ramps" in sys.argv:
             print("MENU: TILE0=%d, %d lumps, %d tiles"%(MENU_TILE0,len(MENU_LUMPS),m_base))
         else:
             f.write("/* generated by wad2c.py --ramps: menu lumps absent */\n#define MENU_HAVE 0\n")
+    # === INTERPIC (intermission): the DOOM level-complete background WIMAP0 (E1 area map), baked as a
+    #     20x14 sprite tilemap EXACTLY like TITLEPIC (per-tile 15-colour palette, vertical stretch to fill
+    #     the active area). Shown between levels. Appended LAST in the ramps block -> nothing in-block shifts
+    #     (downstream vsfloor/vsceil/vsflat re-bake off ramps.c1 via the Makefile). ===
+    INTER_TILE0 = MENU_TILE0 + m_base; ICOLS, IROWS = 20, 14; _ig = None
+    try: _iw,_ih,_ilo,_ito,_ig = parse_patch(glump("WIMAP0"))
+    except Exception as _e: print("WIMAP0: not found (%s) -> no intermission screen" % _e)
+    if _ig:
+        _rgb=_np.zeros((IROWS*16,ICOLS*16,3),dtype=_np.uint8)
+        for _y in range(IROWS*16):
+            _sy=_y*_ih//(IROWS*16)
+            if _sy>=_ih: continue
+            for _x in range(min(_iw,ICOLS*16)):
+                _i=_ig[_sy][_x]
+                if _i>=0: _rgb[_y,_x]=PALRGB[_i]
+        _idx=_np.zeros((IROWS*16,ICOLS*16),dtype=_np.uint8); _pals=[]; _pmap={}; _tmap=[[0]*ICOLS for _ in range(IROWS)]
+        for _ty in range(IROWS):
+            for _tx in range(ICOLS):
+                _q=Image.fromarray(_rgb[_ty*16:_ty*16+16,_tx*16:_tx*16+16]).quantize(colors=15,method=Image.MEDIANCUT)
+                _qp=(_q.getpalette()+[0]*45)[:45]; _qd=list(_q.getdata())
+                _cols=tuple((_qp[_c*3],_qp[_c*3+1],_qp[_c*3+2]) for _c in range(15))
+                _key=tuple(_ngc(*_c) for _c in _cols)
+                if _key not in _pmap: _pmap[_key]=len(_pals); _pals.append(_cols)
+                _tmap[_ty][_tx]=_pmap[_key]
+                for _p in range(256): _idx[_ty*16+_p//16,_tx*16+_p%16]=_qd[_p]+1
+        MAXIPAL=248
+        if len(_pals)>MAXIPAL:
+            _use=[0]*len(_pals)
+            for _ty in range(IROWS):
+                for _tx in range(ICOLS): _use[_tmap[_ty][_tx]]+=1
+            _ord=sorted(range(len(_pals)), key=lambda p:-_use[p]); _keep=set(_ord[:MAXIPAL])
+            def _ipd(a,b): return sum(min((a[i][0]-b[j][0])**2+(a[i][1]-b[j][1])**2+(a[i][2]-b[j][2])**2 for j in range(15)) for i in range(15))
+            def _icm(c,pal):
+                _bi,_bd=0,1<<60
+                for _i,_pc in enumerate(pal):
+                    _d=(c[0]-_pc[0])**2+(c[1]-_pc[1])**2+(c[2]-_pc[2])**2
+                    if _d<_bd: _bd,_bi=_d,_i
+                return _bi
+            _near={_d: min(_ord[:MAXIPAL], key=lambda k:_ipd(_pals[_d],_pals[k])) for _d in _ord[MAXIPAL:]}
+            for _ty in range(IROWS):
+                for _tx in range(ICOLS):
+                    _p=_tmap[_ty][_tx]
+                    if _p in _keep: continue
+                    _k=_near[_p]
+                    for _yy in range(16):
+                        for _xx in range(16):
+                            _oi=int(_idx[_ty*16+_yy,_tx*16+_xx])
+                            if _oi: _idx[_ty*16+_yy,_tx*16+_xx]=_icm(_pals[_p][_oi-1],_pals[_k])+1
+                    _tmap[_ty][_tx]=_k
+            _comp={_old:_new for _new,_old in enumerate(_ord[:MAXIPAL])}
+            _pals=[_pals[_ord[_i]] for _i in range(MAXIPAL)]
+            for _ty in range(IROWS):
+                for _tx in range(ICOLS): _tmap[_ty][_tx]=_comp[_tmap[_ty][_tx]]
+            print("INTERPIC: capped palettes to %d (merged %d least-used)"%(MAXIPAL,len(_use)-MAXIPAL))
+        _gi=Image.fromarray(_idx,'P'); _gi.putpalette(sum([[_v,_v,_v] for _v in range(256)],[]))
+        _gp="%s/interpic.gif"%tmpd; _gi.save(_gp,optimize=False)
+        _ic1="%s/interpic.c1"%tmpd; _ic2="%s/interpic.c2"%tmpd
+        subprocess.run([_TILETOOL,"--sprite","-c",_gp,"-o",_ic1,_ic2],check=True,env=_ttenv)
+        ramp_c1+=open(_ic1,'rb').read(); ramp_c2+=open(_ic2,'rb').read()
+        with open(os.path.join(ngdir,"interpic.h"),"w") as f:
+            f.write("/* generated by wad2c.py --ramps: DOOM WIMAP0 intermission, %dx%d sprite tilemap, per-tile palette */\n"%(ICOLS,IROWS))
+            f.write("#define INTER_HAVE 1\n#define INTER_TILE0 %d\n#define INTER_COLS %d\n#define INTER_ROWS %d\n#define INTER_NPAL %d\n"%(INTER_TILE0,ICOLS,IROWS,len(_pals)))
+            f.write("static const unsigned short INTER_PAL16[%d][16]={\n"%len(_pals))
+            for _pc in _pals: f.write("{0,"+",".join("0x%04X"%_ngc(*_c) for _c in _pc)+"},\n")
+            f.write("};\nstatic const unsigned char INTER_MAP[%d][%d]={\n"%(IROWS,ICOLS))
+            for _ty in range(IROWS): f.write("{"+",".join(str(_tmap[_ty][_tx]) for _tx in range(ICOLS))+"},\n")
+            f.write("};\n")
+        print("INTERPIC: TILE0=%d, %d tiles, %d palettes"%(INTER_TILE0,ICOLS*IROWS,len(_pals)))
+    else:
+        with open(os.path.join(ngdir,"interpic.h"),"w") as f:
+            f.write("#define INTER_HAVE 0\n#define INTER_TILE0 0\n#define INTER_COLS 20\n#define INTER_ROWS 14\n#define INTER_NPAL 1\n")
+            f.write("static const unsigned short INTER_PAL16[1][16]={{0}};\nstatic const unsigned char INTER_MAP[14][20]={{0}};\n")
     open(os.path.join(ngdir, "ramps.c1"), "wb").write(ramp_c1)
     open(os.path.join(ngdir, "ramps.c2"), "wb").write(ramp_c2)
     with open(os.path.join(ngdir, "ramps.h"), "w") as f:
@@ -831,6 +990,14 @@ if "--ramps" in sys.argv:
         for t in range(len(texlist)):
             f.write("{" + ",".join("{%d,%d}" % (ramp_off[t][d][0], ramp_off[t][d][1]) for d in range(RAMP_NDROP)) + "},\n")
         f.write("};\n")
+        f.write("/* OPAQUE-CORNER cap OVERLAY (cap mode TB32o): per-slope solid-above/transparent-below wedge,\n"
+                "   drawn over the wall corner with a cap palette (idx1 = mean ceiling/floor colour) so the bevel\n"
+                "   merges with the ceiling/floor instead of revealing the gridded LUT. Tile = RAMP_OVL_TILE0 +\n"
+                "   RAMP_OVL_OFF[slope-RAMP_DMIN] + k (stack tile, k=0 nearest the corner). -1 = no wedge. */\n")
+        f.write("#define RAMP_OVL_TILE0 %d\n" % RAMP_OVL_TILE0)
+        f.write("static const int RAMP_OVL_OFF[%d]={%s};\n" % (RAMP_NDROP, ",".join(str(v) for v in ramp_ovl_off)))
+        f.write("static const unsigned short CAP_CEIL_PAL[16]={%s};\n" % ",".join("0x%04X" % v for v in CAP_CEIL_PAL))
+        f.write("static const unsigned short CAP_FLOOR_PAL[16]={%s};\n" % ",".join("0x%04X" % v for v in CAP_FLOOR_PAL))
         f.write("/* LOD: collapsed far walls (cot==1) sample the vertical-average strip at AVG_TILE0+AVG_OFF[tex]+shift*wt+tcol */\n")
         f.write("#define AVG_TILE0 %d\n" % AVG_TILE0)
         f.write("static const int AVG_OFF[%d]={%s};\n" % (len(texlist), ",".join(str(avg_off[t]) for t in range(len(texlist)))))
@@ -902,6 +1069,7 @@ open(os.path.join(ngdir, "textiles.c2"), "wb").write(tiles_c2)
 with open(os.path.join(ngdir, "textiles.h"), "w") as f:
     f.write("/* generated by wad2c.py -- per-texture tile offsets + 16-colour palettes */\n")
     f.write("#define NTEXTILE %d\n" % len(tbase))
+    f.write("#define SKY_TEX_VAL %d\n" % SKY_TEX)   # SKY1 texture index (-1 if none); the live cart defines `const int SKY_TEX` from this (the on-rails map.c that used to provide SKY_TEX is delinked)
     f.write("#define TEX_NSHIFT %d\n" % NSHIFT)   # horizontal phases baked per texture; phase s at TEXTBASE+s*(TEXWT*TEXHT)
     f.write("#define TEX_TOTAL %d\n" % TEX_TOTAL)  # base tile count; per-pixel fog density d lives at base_tile + d*TEX_TOTAL
     f.write("#define FOG_NDENS %d\n" % FOG_NDENS)  # number of fog-dither density levels baked after the base block
@@ -926,21 +1094,46 @@ spr_want = [("PISTOL", "PISGA0", 0, None), ("IMP", "TROOA1", 0, None), ("STBAR",
             ("FACE", "STFST00", 0, None),  ("FACEL", "STFST02", 0, "FACE"), ("FACER", "STFST01", 0, "FACE"), ("FACEG", "STFEVL0", 0, "FACE"),
             ("IMPB", "TROOB1", 0, "IMP"), ("IMPDI", "TROOI0", 0, "IMP"), ("IMPDK", "TROOK0", 0, "IMP"), ("IMPDM", "TROOM0", 0, "IMP"),
             ("POSS", "POSSA1", 0, None), ("SPOS", "SPOSA1", 0, None),
+            ("SARG", "SARGA1", 0, None), ("BOSS", "BOSSA1", 0, None),   # E1 monsters: Pinky/Demon + Baron of Hell (per-map palettes -- see MONSTER_PERMAP)
             ("POSSD", "POSSL0", 0, "POSS"), ("SPOSD", "SPOSL0", 0, "SPOS"),   # DIE5 resting-corpse frames -> zombieman/shotgunner leave bodies (imp already has IMPDM)
+            ("SARGD", "SARGN0", 0, "SARG"), ("BOSSD", "BOSSO0", 0, "BOSS"),   # Pinky/Baron DIE-rest corpses
+            ("HEAD", "HEADA1", 0, None), ("SPID", "SPIDA1D1", 0, None), ("CYBR", "CYBRA1", 0, None),   # E2-4: Cacodemon, Spider Mastermind, Cyberdemon (base front frames)
+            ("SKUL", "SKULA1", 0, None), ("SKUL_B0", "SKULB1", 0, "SKUL"),   # Lost Soul: rotation-less (no A2A8), A/B walk frames
+            ("HEADD", "HEADL0", 0, "HEAD"), ("SPIDD", "SPIDP0", 0, "SPID"), ("CYBRD", "CYBRP0", 0, "CYBR"), ("SKULD", "SKULF0", 0, "SKUL"),   # corpses (Lost Soul uses a death frame as its body)
             ("BAR", "BAR1A0", 0, None), ("BEXPC", "BEXPC0", 0, None), ("BEXPA", "BEXPB0", 0, "BEXPC"), ("BEXPE", "BEXPE0", 0, "BEXPC")]
 # MONSTER 8-WAY ROTATIONS (frame A): R0 = the A1 front already baked above (IMP/POSS/SPOS). Bake R1..R4 =
 # A2A8/A3A7/A4A6/A5; rotations 6/7/8 reuse R3/R2/R1 H-flipped at draw. Share the base monster's palette.
-for _mon, _b in (("IMP", "TROO"), ("POSS", "POSS"), ("SPOS", "SPOS")):
+for _mon, _b in (("IMP", "TROO"), ("POSS", "POSS"), ("SPOS", "SPOS"), ("SARG", "SARG"), ("BOSS", "BOSS"), ("HEAD", "HEAD")):   # mirror-packed (5 A + 5 B). SPID is also mirror-packed but its rot1/rot5 use CROSS-FRAME lump names -> handled explicitly below.
     for _ri, _suf in ((1, "A2A8"), (2, "A3A7"), (3, "A4A6"), (4, "A5")):       # A-frame R1..R4 (R0 = the A1 above)
         spr_want.append(("%s_R%d" % (_mon, _ri), _b + _suf, 0, _mon))
     for _ri, _suf in ((0, "B1"), (1, "B2B8"), (2, "B3B7"), (3, "B4B6"), (4, "B5")):  # B-frame R0..R4 (idle/walk frame 2)
         spr_want.append(("%s_B%d" % (_mon, _ri), _b + _suf, 0, _mon))
+for _ri in range(1, 8):   # CYBERDEMON: 8 INDIVIDUAL rotations (NOT mirror-packed). R1..R7 = CYBRA2..A8 (R0 = the CYBRA1 base above)
+    spr_want.append(("CYBR_R%d" % _ri, "CYBRA%d" % (_ri + 1), 0, "CYBR"))
+for _ri in range(8):      # CYBR B-frame B0..B7 = CYBRB1..B8
+    spr_want.append(("CYBR_B%d" % _ri, "CYBRB%d" % (_ri + 1), 0, "CYBR"))
+# SPIDER: mirror-packed (5 A + 5 B) but rotations 1 & 5 use CROSS-FRAME lump names (A1D1/A5D5, B1E1/B5E5), not the standard A5/B1/B5. Base R0 = SPIDA1D1 (in spr_want above).
+for _ri, _l in ((1,"SPIDA2A8"),(2,"SPIDA3A7"),(3,"SPIDA4A6"),(4,"SPIDA5D5")):
+    spr_want.append(("SPID_R%d" % _ri, _l, 0, "SPID"))
+for _ri, _l in ((0,"SPIDB1E1"),(1,"SPIDB2B8"),(2,"SPIDB3B7"),(3,"SPIDB4B6"),(4,"SPIDB5E5")):
+    spr_want.append(("SPID_B%d" % _ri, _l, 0, "SPID"))
 spr_c1 = bytearray(); spr_c2 = bytearray(); sprbase = 0; sprmeta = []
 spr_paldb = {}; spr_nextpal = 0          # tag -> (local, remap, pal16, palslot)
+item_pal16 = []                          # per-map sprite palettes: E1 MONSTERS (SARG/BOSS) first, then items; uploaded after the flats via g_itembase
+MONSTER_PERMAP = {"SARG", "BOSS", "HEAD", "SKUL", "CYBR", "SPID"}   # all added monster bases routed PER-MAP (global slots 244-254 are full); rotations/corpses share via palfrom
+# BILLBOARD 2x: the Neo Geo shrinks sprites but CAN'T magnify them, so close/mid billboards rendered at
+# source-pixel size = ~0.7 of true perspective height. Bake the world billboards at 2x source -> the cart's
+# vs_billboard /512 size math (cap 512) reaches true size for depth>=80 (shrink-only). The HUD/gun sprites
+# below draw 1:1 (they do NOT go through vs_billboard), so they stay native. (HUDNUM/HEDGER are baked in their
+# own blocks further down and are also 1:1.) Keep this set in sync with vs_billboard's /512 in neogeo/main.c.
+HUD1X = {"PISTOL", "STBAR", "FLASH", "FACE", "FACEL", "FACER", "FACEG"}
 for tag, lname, opaque, palfrom in spr_want:
     try: pb = glump(lname)
     except Exception: print("  sprite %s (%s) not found, skipping" % (tag, lname)); continue
     w, h, lo, to, grid = parse_patch(pb)
+    if tag not in HUD1X:                                     # world billboard -> 2x source (nearest-neighbour)
+        w, h, lo, to = w * 2, h * 2, lo * 2, to * 2
+        grid = [[grid[y >> 1][x >> 1] for x in range(w)] for y in range(h)]
     if palfrom and palfrom in spr_paldb:
         local, remap, pal16, palslot = spr_paldb[palfrom]
     else:
@@ -950,7 +1143,10 @@ for tag, lname, opaque, palfrom in spr_want:
         for idx, i in local.items():
             r, g, b = PALRGB[idx]; r5, g5, b5 = r >> 3, g >> 3, b >> 3
             pal16[i] = ((r5 & 1) << 14) | ((g5 & 1) << 13) | ((b5 & 1) << 12) | ((r5 >> 1) << 8) | ((g5 >> 1) << 4) | (b5 >> 1)
-        palslot = spr_nextpal; spr_nextpal += 1
+        if tag in MONSTER_PERMAP:
+            palslot = -1 - len(item_pal16); item_pal16.append(pal16)   # per-map negative marker -> ITEMPAL16 (like items); draw adds g_itembase
+        else:
+            palslot = spr_nextpal; spr_nextpal += 1
         spr_paldb[tag] = (local, remap, pal16, palslot)
     wp = ((w + 15) // 16) * 16; hp = ((h + 15) // 16) * 16
     px = bytearray(wp * hp)                                  # index 0 = transparent (around the sprite)
@@ -1020,15 +1216,60 @@ _c1p = "%s/spr_HEDGER.c1" % tmpd; _c2p = "%s/spr_HEDGER.c2" % tmpd
 subprocess.run([_TILETOOL, "--sprite", "-c", _gp, "-o", _c1p, _c2p], check=True, env=_ttenv)
 _c1d = open(_c1p, 'rb').read(); _c2d = open(_c2p, 'rb').read(); spr_c1 += _c1d; spr_c2 += _c2d
 sprmeta.append(("HEDGER", sprbase, 1, 2, 16, 32, 0, 0, _p16, _ps)); sprbase += len(_c1d) // 64
+# ---- ITEM billboards (armour + ammo): each gets its OWN tiles (appended to the sprite chain tail) +
+#      its OWN 16-colour palette, but the palette is NOT a global 244+ slot (those are full). Instead
+#      palettes are emitted into ITEMPAL16[] and uploaded PER-MAP after the flats (slots <=243) by
+#      vs_upload_tex_pals in main.c -- mirroring the per-map flat-palette path. palslot is stored as a
+#      NEGATIVE marker (-1-itemidx) so the header emit routes them to ITEM_PAL/ITEMPAL16 not 244+. ----
+item_want = [("ARM1","ARM1A0"),("ARM2","ARM2A0"),("BON2","BON2A0"),      # armour: green, blue, helmet bonus
+             ("CLIP","CLIPA0"),("AMMO","AMMOA0"),("SHEL","SHELA0"),("SBOX","SBOXA0"),  # bullets, shells
+             ("ROCK","ROCKA0"),("BROK","BROKA0")]          # rockets (CELL/CELP omitted: not in shareware doom1.wad -- no plasma/BFG ammo in E1)
+# item_pal16 already defined above (holds the per-map MONSTER pals SARG/BOSS first); items append AFTER them so SPR_x_PAL indices stay contiguous (monsters 0..,  items continue)
+for tag, lname in item_want:
+    try: pb = glump(lname)
+    except Exception: print("  item %s (%s) not found, skipping" % (tag, lname)); continue
+    w, h, lo, to, grid = parse_patch(pb)
+    w, h, lo, to = w * 2, h * 2, lo * 2, to * 2             # items are world billboards -> 2x source (see HUD1X note)
+    grid = [[grid[y >> 1][x >> 1] for x in range(w)] for y in range(h)]
+    used = [idx for idx, _ in Counter(p for r in grid for p in r if p >= 0).most_common(15)]
+    local, remap = remap15(used)
+    pal16 = [0] * 16
+    for idx, i in local.items():
+        r, g, b = PALRGB[idx]; r5, g5, b5 = r >> 3, g >> 3, b >> 3
+        pal16[i] = ((r5 & 1) << 14) | ((g5 & 1) << 13) | ((b5 & 1) << 12) | ((r5 >> 1) << 8) | ((g5 >> 1) << 4) | (b5 >> 1)
+    wp = ((w + 15) // 16) * 16; hp = ((h + 15) // 16) * 16
+    px = bytearray(wp * hp)                                  # index 0 = transparent
+    for y in range(h):
+        for x in range(w):
+            v = grid[y][x]; px[y * wp + x] = remap[v] if v >= 0 else 0
+    img = Image.frombytes('P', (wp, hp), bytes(px))
+    img.putpalette(sum([[((pal16[i] >> 8) & 0xF) * 17, ((pal16[i] >> 4) & 0xF) * 17, (pal16[i] & 0xF) * 17] for i in range(16)], []))
+    gifp = "%s/spr_%s.gif" % (tmpd, tag); img.save(gifp, optimize=False)
+    c1p = "%s/spr_%s.c1" % (tmpd, tag); c2p = "%s/spr_%s.c2" % (tmpd, tag)
+    subprocess.run([_TILETOOL, "--sprite", "-c", gifp, "-o", c1p, c2p], check=True, env=_ttenv)
+    c1d = open(c1p, 'rb').read(); c2d = open(c2p, 'rb').read()
+    spr_c1 += c1d; spr_c2 += c2d
+    sprmeta.append((tag, sprbase, wp // 16, hp // 16, w, h, lo, to, pal16, -1 - len(item_pal16)))   # palslot<0 = item idx marker
+    item_pal16.append(pal16)
+    sprbase += len(c1d) // 64
 open(os.path.join(ngdir, "sprites.c1"), "wb").write(spr_c1)
 open(os.path.join(ngdir, "sprites.c2"), "wb").write(spr_c2)
 with open(os.path.join(ngdir, "sprites.h"), "w") as f:
     f.write("/* generated by wad2c.py -- demo sprites; absolute tile = SPR_TILE0 + SPR_x_BASE + r*SPR_x_WT + col */\n")
     f.write("#define SPR_COUNT %d\n" % len(sprmeta))
     for i, (tag, base, wt, ht, w, h, lo, to, pal16, palslot) in enumerate(sprmeta):
+        # palslot>=0 -> global sprite palette slot (244+); palslot<0 -> ITEM: SPR_x_PAL = item index
+        # (the runtime per-map base g_itembase is ADDED in the draw path), palette comes from ITEMPAL16[].
+        palval = (244 + palslot) if palslot >= 0 else (-1 - palslot)
         f.write("#define SPR_%s_BASE %d\n#define SPR_%s_WT %d\n#define SPR_%s_HT %d\n#define SPR_%s_W %d\n#define SPR_%s_H %d\n#define SPR_%s_LO %d\n#define SPR_%s_TO %d\n#define SPR_%s_PAL %d\n"
-                % (tag, base, tag, wt, tag, ht, tag, w, tag, h, tag, lo, tag, to, tag, 244 + palslot))
+                % (tag, base, tag, wt, tag, ht, tag, w, tag, h, tag, lo, tag, to, tag, palval))
         f.write("static const unsigned short SPR_%s_PAL16[16]={%s};\n" % (tag, ",".join("0x%04X" % c for c in pal16)))
+    # per-map ITEM palettes (armour/ammo): uploaded after the flats by vs_upload_tex_pals; index = SPR_x_PAL.
+    f.write("#define NITEMPAL %d\n" % len(item_pal16))
+    f.write("static const unsigned short ITEMPAL16[%d][16]={\n" % max(1, len(item_pal16)))
+    for p in (item_pal16 or [[0] * 16]):
+        f.write(" {%s},\n" % ",".join("0x%04X" % c for c in p))
+    f.write("};\n")
 print("baked %d sprites into C-ROM (%d tiles): %s" % (len(sprmeta), sprbase, ",".join(m[0] for m in sprmeta)))
 
 print("%s: %d verts %d sectors %d sides %d lines %d segs %d nodes %d things | %d textures, crom %d KB"

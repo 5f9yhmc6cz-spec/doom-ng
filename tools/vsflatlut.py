@@ -23,12 +23,29 @@ data = open(WAD, "rb").read()
 _, n, diro = struct.unpack_from("<4sii", data, 0)
 D = [struct.unpack_from("<ii8s", data, diro + i * 16) for i in range(n)]
 nm = [d[2].rstrip(b"\0").decode("latin1") for d in D]
-t1 = [i for i, x in enumerate(nm) if x == "TEXTURE1"][0]; tb = data[D[t1][0]:D[t1][0] + D[t1][1]]
-tex1 = set()
-for i in range(struct.unpack_from("<i", tb, 0)[0]):
-    o = struct.unpack_from("<i", tb, 4 + i * 4)[0]
-    tex1.add(tb[o:o + 8].split(b"\0")[0].decode("latin1").upper())
-WALLCOUNT = sum(1 for w in WALLS if w.upper() in tex1)   # host texlist = walls(in TEXTURE1) then flats
+# WALLCOUNT = the flat-block start in the host's e1m1.crom -- the texid --bakefloor ACTUALLY indexes.
+# MUST come from the CROM the host loads, not a re-derived TEXTURE1 count: those drifted (TEXTURE1-only
+# 103 vs the CROM's real 245-wall layout) -> every flat slot baked the wrong texture (2026-06-23 flats-
+# garbage bug, confirmed on MAME). The appended flats are the one long contiguous 64x64 run.
+def _crom_wallcount(path):
+    b = open(path, "rb").read(); q = 768; nt = struct.unpack_from("<I", b, q)[0]; q += 4
+    dm = [struct.unpack_from("<hhI", b, q + i * 8)[:2] for i in range(nt)]
+    best = (0, 0); i = 0
+    while i < nt:
+        if dm[i] == (64, 64):
+            j = i
+            while j < nt and dm[j] == (64, 64): j += 1
+            if j - i > best[1]: best = (i, j - i)
+            i = j
+        else: i += 1
+    return best   # (start, length)
+_flat_start, _flat_len = _crom_wallcount(os.path.join(ROOT, "e1m1.crom"))
+if _flat_len != len(ordered):
+    raise SystemExit("vsflatlut: e1m1.crom flat-block is %d flats but e1_flat_order gives %d -- "
+                     "DOOMNG_EPISODES mismatch between wad2c (e1m1.crom) and vsflatlut. "
+                     "Rebuild e1m1.crom with the SAME episode set (this is the flats-garbage bug)."
+                     % (_flat_len, len(ordered)))
+WALLCOUNT = _flat_start
 
 # --- per-flat tier (views=NA, phases=NPH); default 8/4. (fold column ignored: all 90deg now.) ---
 DEFAULT = (8, 4)
@@ -52,9 +69,11 @@ NFLAT = len(ordered); SKY = "F_SKY1"
 base = [-1] * NFLAT; na_a = [0] * NFLAT; nph_a = [0] * NFLAT; pal_a = [[0] * 16 for _ in range(NFLAT)]
 parts = []; off = 0                                  # parts = (c1path,c2path) per baked flat, in slot order
 ttenv = dict(os.environ); ttenv["PATH"] = _BREWPY + ttenv.get("PATH", "")
+NOLUT = os.environ.get("VSFLAT_NOLUT", "") not in ("", "0")   # uber-36: skip the REAL-flat LUT bake -> base[]=-1 so nflat=0 at runtime + 0-byte vsflat.c1/c2. Frees the per-map flat palette slots for the fog bands (g_generic=1 already draws the SYNTHETIC vsfloor/vsceil LUT, never these). Self-check above still runs (order derivation). Re-enable: drop VSFLAT_NOLUT + set gen=0 (param 5).
 for slot, name in enumerate(ordered):
     if name == SKY:                                  # sky: no floor LUT (cart leaves backdrop), base stays -1
         continue
+    if NOLUT: continue                               # uber-36 (VSFLAT_NOLUT): base stays -1, no tiletool, no tiles emitted for this flat
     na, nph = tier(name)
     env = dict(os.environ)
     env.update(FLAT=str(WALLCOUNT + slot), FLNA=str(na), FLNPHASE=str(nph), FLNAL=str(4 * na),

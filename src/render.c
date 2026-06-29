@@ -1,5 +1,5 @@
 /* render.c -- BSP renderer. The math path uses `real` (float by default, 16.16
- * under -DUSE_FIXED=1) so we can A/B-verify the fixed-point port against float.
+ * under -DUSE_FIXED=1) so the fixed-point port can be A/B-verified against float.
  * Collision/doors/hitscan stay float (they don't affect the rendered frame). */
 #include "dng.h"
 #include "fixed.h"
@@ -147,7 +147,7 @@ static void render_seg(int segidx){
     /* (per-band edge slopes are computed in the band loop now; the whole-seg slope is no longer used) */
     /* Band width is NO LONGER throttled by the silhouette slope: the runtime now interpolates
        each 16px chunk's top/height along (dtop,dbot), so a wide band tracks a steep edge exactly.
-       Throttling by slope did the opposite of what we want -- it starved the steepest walls of the
+       Throttling by slope did the opposite of the intent -- it starved the steepest walls of the
        multi-chunk width their slope needs to show. Go full width; only the texture u-warp would
        argue for narrower, and that's deferred. (Bonus: fewer records -> smaller blob.) */
     int bw=PCFG.max_band;
